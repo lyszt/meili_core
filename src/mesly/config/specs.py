@@ -90,10 +90,6 @@ class SystemSpecs:
             except Exception:
                 pass
 
-    def supports_local_llm(self, min_ram_gb: float = 4.0) -> bool:
-        """Check if system has enough resources for local LLM (ollama/llamacpp)."""
-        return self.ram_available_gb >= min_ram_gb
-
     def supports_neutts(
         self,
         min_ram_gb: float = 8.0,

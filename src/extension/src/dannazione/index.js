@@ -40,23 +40,6 @@ class DannazioneAPI {
     console.log('[Dannazione] Selection sent successfully:', data);
     return data;
   }
-
-  async sendChatMessage(prompt, page = {}) {
-    const response = await fetch(`${this.base_url}/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, page }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
-    }
-
-    const data = await response.json();
-    console.log('[Dannazione] Chat message sent successfully:', data);
-    return data;
-  }
 }
 
 export default DannazioneAPI;

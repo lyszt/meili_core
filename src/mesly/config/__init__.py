@@ -11,10 +11,8 @@ from .models import (
     CaptureConfig,
     CaptureRegion,
     OverlayConfig,
-    AIConfig,
-    AIClient
+    PerformanceConfig
 )
-from .prompts import ProvidentiaPrompts, get_prompt
 
 __all__ = [
     "ConfigTemplate",
@@ -25,8 +23,5 @@ __all__ = [
     "CaptureConfig",
     "CaptureRegion",
     "OverlayConfig",
-    "AIConfig",
-    "AIClient",
-    "ProvidentiaPrompts",
-    "get_prompt"
+    "PerformanceConfig"
 ]

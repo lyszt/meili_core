@@ -1,79 +1,46 @@
-# OCR Libraries
+# OCR
 pytesseract
-easyocr
-paddleocr
 
-# AI/LLM Providers - Cloud
-google-genai
-google-cloud-texttospeech
-openai
-
-# AI/LLM Providers - Local
-ollama
-llama-cpp-python
-accelerate
+# Translation (local Helsinki-NLP / MarianMT)
+transformers
 sentencepiece
+sacremoses
+accelerate
 
 # Image Processing & Computer Vision
-opencv-python
 Pillow
 numpy
-sacremoses
-peewee
-transformers
 
 # Screen Capture
 mss
 pyautogui
-
+pynput
 
 # Screen Overlay & GUI
 PyQt5
 PyQt5-Qt5
 PyQt5-sip
-easygui
 fastapi
 uvicorn
+pydantic
 
-# Text to speech
+# Text to speech (NeuTTS + gTTS fallback)
 gtts
-pyttsx3
-
-# Translation Services
-deep-translator
-googletrans
-google-cloud-translate
-pynput
-# Language Detection
-langdetect
-pycld2
-pygetwindow
-# Configuration & Utilities
-pyyaml
-python-dotenv
-requests
-psutil
-
-# Database (for caching translations/vocabulary)
-sqlalchemy
-
-# Logging & Debugging
-loguru
-
-# Testing
-pytest
-pytest-cov
-lxml
-
-
-# Others ( Not sure what it's used for)
-scipy-stubs
-scipy
-
-# Neutts
 librosa==0.11.0
 neucodec>=0.0.4
 phonemizer==3.3.0
 resemble-perth==1.0.1
 soundfile==0.13.1
+scipy
 
+# HTML parsing (page context in the server)
+beautifulsoup4
+lxml
+
+# Configuration & Utilities
+pyyaml
+psutil
+loguru
+
+# Testing
+pytest

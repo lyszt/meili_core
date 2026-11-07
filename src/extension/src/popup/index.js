@@ -1,6 +1,5 @@
 import { LitElement, css, html } from 'lit';
 import config from '../config/index.js';
-import '../components/chat/index.js';
 import '@material/web/button/outlined-button.js';
 import '@material/web/checkbox/checkbox.js';
 
@@ -16,7 +15,6 @@ export class DannazionePopup extends LitElement {
       overlayEnabled: { type: Boolean },
       fromLang: { type: String },
       toLang: { type: String },
-      activeTab: { type: String },
     };
   }
 
@@ -28,7 +26,6 @@ export class DannazionePopup extends LitElement {
     this.overlayEnabled = true;
     this.fromLang = 'auto';
     this.toLang = 'en';
-    this.activeTab = 'translate';
     this.languages = [
       { code: 'auto', name: 'Auto Detect' },
       { code: 'en', name: 'English' },
@@ -171,21 +168,18 @@ export class DannazionePopup extends LitElement {
 
     this.isTranslating = true;
     try {
-      const result = await translate(this.selectedText, {
-        from: this.fromLang === 'auto' ? undefined : this.fromLang,
-        to: this.toLang
+      // Route through the background script, which calls the local backend (/translate)
+      const response = await chrome.runtime.sendMessage({
+        type: 'TRANSLATE_TEXT',
+        text: this.selectedText,
       });
-      this.translatedText = result.text;
+      this.translatedText = response?.translation || 'No translation available';
     } catch (error) {
       console.error('Translation failed:', error);
-      this.translatedText = 'Translation failed';
+      this.translatedText = 'Translation failed: ' + (error.message || error);
     } finally {
       this.isTranslating = false;
     }
-  }
-
-  switchTab(tab) {
-    this.activeTab = tab;
   }
 
   render() {
@@ -195,30 +189,7 @@ export class DannazionePopup extends LitElement {
           <h1>Dannazione di Providenza</h1>
         </header>
 
-        <div class="tabs">
-          <button
-            class="tab ${this.activeTab === 'translate' ? 'active' : ''}"
-            @click=${() => this.switchTab('translate')}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z" fill="currentColor"/>
-            </svg>
-            Translate
-          </button>
-          <button
-            class="tab ${this.activeTab === 'chat' ? 'active' : ''}"
-            @click=${() => this.switchTab('chat')}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            Chat
-          </button>
-        </div>
-
-        ${this.activeTab === 'translate'
-          ? html`
-              <div class="settings-section">
+        <div class="settings-section">
                 <div class="setting-item">
                   <label>
                     <span>From Language</span>
@@ -277,12 +248,6 @@ export class DannazionePopup extends LitElement {
                     `
                   : html`<p class="hint">Select text on the page</p>`}
               </div>
-            `
-          : html`
-              <div class="chat-tab-content">
-                <dannazione-chat></dannazione-chat>
-              </div>
-            `}
       </div>
     `;
   }

@@ -3,19 +3,15 @@
 
 # OCR Settings
 ocr:
-  engine: "easyocr"  # Options: easyocr, pytesseract, paddleocr
+  engine: "pytesseract"
   languages:
-    - "es"  # Spanish
-    - "pt"  # Portuguese
-    - "fr"  # French
-    - "it"  # Italian
-    - "ro"  # Romanian
-    - "de"  # German
+    - "en"
+    - "zh"  # Install the matching Tesseract language packs
   confidence_threshold: 0.5
 
-# Translation Settings
+# Translation Settings (local Helsinki-NLP MarianMT, multi-language -> English)
 translation:
-  service: "google"  # Options: google, deepl
+  service: "helsinki-nlp"
   source_language: "auto"
   target_language: "en"
   cache_enabled: true
@@ -40,38 +36,7 @@ overlay:
 performance:
   use_gpu: false
   max_threads: 4
-  # Specs-based feature gating (from crash analysis: swap pressure + low RAM = OOM)
-  min_ram_local_llm_gb: 4
+  # Specs-based feature gating for NeuTTS (disabled by default)
   min_ram_neutts_gb: 8
   max_swap_used_gb: 6  # Disable NeuTTS when swap used > this (system under pressure)
   neutts_enabled: false
-
-# AI / LLM configuration matching src/mesly/config/models/ai_config.py
-ai:
-  # Preferred provider: gemini, ollama, llamacpp
-  preferred_provider: "ollama"
-
-  # Cloud AI clients (match AIConfig.__post_init__ defaults)
-  clients:
-    - provider: "gemini"
-      api_key: null
-      model: "gemini-2.5-flash-lite"
-      temperature: 0.7
-      max_tokens: 1024
-      enabled: false
-
-  # Local LLM clients
-  local_clients:
-    - provider: "ollama"
-      model: "phi3.5"
-      host: "http://localhost:11434"
-      temperature: 0.7
-      max_tokens: 2048
-      enabled: true
-
-    - provider: "llamacpp"
-      model: "llama2"
-      model_path: "/path/to/llama/model.bin"
-      temperature: 0.7
-      max_tokens: 2048
-      enabled: false

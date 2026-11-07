@@ -18,7 +18,6 @@ def main():
     """Main application entry point"""
     print(f"Mesly v{__version__}")
     print("OCR Language Learning Tool")
-    print("Application not yet implemented")
 
 
 if __name__ == "__main__":

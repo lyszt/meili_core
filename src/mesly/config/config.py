@@ -12,10 +12,7 @@ from .models import (
     CaptureConfig,
     CaptureRegion,
     OverlayConfig,
-    PerformanceConfig,
-    AIConfig,
-    AIClient,
-    LocalLLMClient
+    PerformanceConfig
 )
 from ..utils import Logger
 
@@ -40,7 +37,6 @@ class ConfigTemplate:
         self.capture = CaptureConfig()
         self.overlay = OverlayConfig()
         self.performance = PerformanceConfig()
-        self.ai = AIConfig()
 
         # Load from file if exists, otherwise save defaults
         if self.filepath.exists():
@@ -58,17 +54,6 @@ class ConfigTemplate:
         with open(self.filepath, 'r') as f:
             data = yaml.safe_load(f)
 
-        # Reconstruct AI config with clients list
-        ai_data = data.get("ai", {})
-        clients_data = ai_data.get("clients", [])
-        local_clients_data = ai_data.get("local_clients", [])
-        preferred_provider = ai_data.get("preferred_provider", "ollama")
-        self.ai = AIConfig(
-            clients=[AIClient(**client) for client in clients_data] if clients_data else [],
-            local_clients=[LocalLLMClient(**client) for client in local_clients_data] if local_clients_data else [],
-            preferred_provider=preferred_provider
-        )
-
         self.ocr = OCRConfig(**data.get("ocr", {}))
         self.translation = TranslationConfig(**data.get("translation", {}))
         self.capture = CaptureConfig(
@@ -80,10 +65,9 @@ class ConfigTemplate:
         self.performance = PerformanceConfig(
             use_gpu=perf_data.get("use_gpu", False),
             max_threads=perf_data.get("max_threads", 4),
-            min_ram_local_llm_gb=perf_data.get("min_ram_local_llm_gb", 4.0),
             min_ram_neutts_gb=perf_data.get("min_ram_neutts_gb", 8.0),
             max_swap_used_gb=perf_data.get("max_swap_used_gb", 6.0),
-            neutts_enabled=perf_data.get("neutts_enabled", True),
+            neutts_enabled=perf_data.get("neutts_enabled", False),
         )
 
     def save(self) -> None:
@@ -98,12 +82,7 @@ class ConfigTemplate:
                 "region": self.capture.region.__dict__
             },
             "overlay": self.overlay.__dict__,
-            "performance": self.performance.__dict__,
-            "ai": {
-                "clients": [client.__dict__ for client in self.ai.clients],
-                "local_clients": [client.__dict__ for client in self.ai.local_clients],
-                "preferred_provider": self.ai.preferred_provider
-            }
+            "performance": self.performance.__dict__
         }
 
         with open(self.filepath, 'w') as f:
@@ -120,12 +99,7 @@ class ConfigTemplate:
                 "region": self.capture.region.__dict__
             },
             "overlay": self.overlay.__dict__,
-            "performance": self.performance.__dict__,
-            "ai": {
-                "clients": [client.__dict__ for client in self.ai.clients],
-                "local_clients": [client.__dict__ for client in self.ai.local_clients],
-                "preferred_provider": self.ai.preferred_provider
-            }
+            "performance": self.performance.__dict__
         }
         return yaml.dump(config_dict, default_flow_style=False, sort_keys=False)
 

@@ -1,44 +1,42 @@
-import os
+"""
+Application entry point: hotkeys, capture, OCR, translation, TTS, server.
+"""
+
 import sys
 from datetime import datetime
 from pathlib import Path
+
 import pytesseract
-import easygui
 from PIL import Image
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QObject, pyqtSignal, QTimer
 
-from .config.config import ConfigTemplate
-from .config.specs import SystemSpecs
+from .config import ConfigTemplate, SystemSpecs
+from .translation import TranslationService
+from .tts import SpeechSynthesizer
+from .server.server import Server
 from .utils import Logger, HotkeyManager
 from .capture import ScreenCapture
 from .window.main_window import MainWindow
-from .config.prompts import ProvidentiaPrompts
-from .server.server import Server
-from .agent.agent import Agent
-
-__version__ = "0.1.0"
 
 
 class HotkeySignals(QObject):
-    """Qt signals for thread-safe hotkey handling"""
+    """Qt signals for thread-safe hotkey handling."""
     screenshot_requested = pyqtSignal()
+
 
 class MeslyApp:
     def __init__(self):
-        print("MeslyApp v%s" % __version__)
         print("Initializing Mesly...")
         self.config = ConfigTemplate.get_config()
 
-        # Detect system specs for feature gating
+        # Detect system specs for feature gating (e.g. NeuTTS)
         self.specs = SystemSpecs()
         Logger.info(f"System specs: {self.specs.get_specs_summary()}")
 
-        # Setup hotkeys
+        # Setup hotkeys and screen capture
         self.hotkey_manager = HotkeyManager()
         self.screen_capture = ScreenCapture()
-
-
 
         # Signal handler for thread-safe screenshot
         self.signals = HotkeySignals()
@@ -50,16 +48,11 @@ class MeslyApp:
         app.setApplicationName("Mesly")
         app.setStyle("Fusion")
 
-        # Initialize Agent with AI client
-        Logger.info("Initializing Agent...")
-        self.agent = Agent(self.config, specs=self.specs)
+        # Local services: translation (MarianMT) and speech (NeuTTS/gTTS)
+        self.translation_service = TranslationService()
+        self.speech = SpeechSynthesizer(self.config, specs=self.specs)
 
-        if not self.agent.is_ready():
-            Logger.error(f"Agent not ready. Please check your config at config/config.yaml")
-        else:
-            Logger.info("Agent initialized and ready")
-
-        self.window = MainWindow(self.agent)
+        self.window = MainWindow(self.translation_service, self.speech)
         self.window.show()
 
         # Start hotkey listeners
@@ -69,10 +62,8 @@ class MeslyApp:
         self.server = Server(
             host="127.0.0.1",
             port=8263,
-            agent=self.agent,
-            config=self.config,
-            screen_capture=self.screen_capture,
-            window=self.window
+            translation_service=self.translation_service,
+            config=self.config
         )
         self.server.start()
         Logger.info("FastAPI server started on http://127.0.0.1:8263")
@@ -83,23 +74,23 @@ class MeslyApp:
         sys.exit(app.exec())
 
     def _cleanup(self):
-        """Cleanup resources before application exit"""
+        """Cleanup resources before application exit."""
         Logger.info("Cleaning up resources...")
 
-        # Stop hotkey manager
         if self.hotkey_manager:
             self.hotkey_manager.stop()
             Logger.info("Hotkey manager stopped")
 
-        # Close agent and long-term memory
-        if self.agent:
-            self.agent.close()
-            Logger.info("Agent resources closed")
+        if self.translation_service:
+            self.translation_service.close()
+
+        if self.speech:
+            self.speech.close()
 
         Logger.info("Cleanup complete")
 
     def _register_hotkeys(self):
-        """Register Ctrl+Alt+S for screenshot"""
+        """Register Ctrl+Alt+S for screenshot."""
         self.hotkey_manager.register(
             '<ctrl>+<alt>+s',
             self._on_screenshot_hotkey
@@ -107,13 +98,13 @@ class MeslyApp:
         Logger.info("Registered hotkey: Ctrl+Alt+S (Screenshot)")
 
     def _on_screenshot_hotkey(self):
-        """Handle screenshot hotkey press (runs in hotkey thread)"""
+        """Handle screenshot hotkey press (runs in hotkey thread)."""
         Logger.info("Screenshot hotkey pressed (Ctrl+Alt+S)")
         # Emit signal to capture screenshot in main thread
         self.signals.screenshot_requested.emit()
 
     def _capture_screenshot(self):
-        """Capture screenshot (runs in main thread)"""
+        """Capture screenshot (runs in main thread)."""
         screenshot_path = Path(__file__).resolve().parent.parent.parent / "data" / "screenshots"
         screenshot_path.mkdir(parents=True, exist_ok=True)
 
@@ -130,12 +121,12 @@ class MeslyApp:
         QTimer.singleShot(100, self._do_capture)
 
     def _do_capture(self):
-        """Actually perform the capture after delay"""
+        """Actually perform the capture after delay."""
         # Generate filepath with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filepath = f"data/screenshots/screenshot_{timestamp}.png"
 
-        # Create directory if it doesn't exist
+        # Create directory if needed
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
 
         # Capture and save
@@ -144,45 +135,25 @@ class MeslyApp:
         # Restore window
         self.window.showNormal()
 
-        if success:
-            Logger.info(f"Screenshot saved: {filepath}")
-
-            # Perform OCR on the screenshot
-            try:
-                Logger.info("Performing OCR on screenshot...")
-                with Image.open(filepath) as img:
-                    ocr_text = pytesseract.image_to_string(img).strip()
-
-                if ocr_text:
-                    Logger.info(f"OCR extracted {len(ocr_text)} characters")
-
-                    # Show popup to ask user what they want to know
-                    user_question = easygui.enterbox(
-                        msg=f"OCR Text found:\n\n{ocr_text[:200]}{'...' if len(ocr_text) > 200 else ''}\n\nWhat do you want to ask about this text?",
-                        title="Mesly - Ask AI",
-                        default=""
-                    )
-
-                    if user_question:
-                        Logger.info(f"User question: {user_question}")
-
-                        # Process screenshot inquiry through Agent
-                        # Window will handle the UI and audio presentation
-                        self.window.process_screenshot_inquiry(ocr_text, user_question)
-                    else:
-                        Logger.info("User cancelled prompt")
-                        self.window.lbl_status.setText("Screenshot captured, no AI request")
-                else:
-                    Logger.warning("No text found in screenshot")
-                    easygui.msgbox("No text detected in screenshot", "Mesly - OCR")
-
-            except Exception as e:
-                Logger.error(f"OCR or AI processing failed: {e}")
-                easygui.msgbox(f"Error processing screenshot: {e}", "Mesly - Error")
-        else:
+        if not success:
             Logger.error("Failed to capture screenshot")
+            self.window.lbl_status.setText("Failed to capture screenshot")
+            return
 
+        Logger.info(f"Screenshot saved: {filepath}")
 
+        # Perform OCR on the screenshot
+        try:
+            Logger.info("Performing OCR on screenshot...")
+            with Image.open(filepath) as img:
+                ocr_text = pytesseract.image_to_string(img).strip()
 
-
-
+            if ocr_text:
+                Logger.info(f"OCR extracted {len(ocr_text)} characters")
+                self.window.show_ocr_text(ocr_text)
+            else:
+                Logger.warning("No text found in screenshot")
+                self.window.lbl_status.setText("No text detected in screenshot")
+        except Exception as e:
+            Logger.error(f"OCR failed: {e}")
+            self.window.lbl_status.setText(f"OCR error: {e}")

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Dannazione di Providenza",
   "version": "1.0.0",
-  "description": "Alive agent integrated browser extension for real-time language assistance",
+  "description": "Browser extension for real-time language assistance via a local translation backend",
   "author": "lyszt",
 
   "action": {

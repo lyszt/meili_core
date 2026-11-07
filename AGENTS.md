@@ -1,4 +1,3 @@
-- Don't create MD files to explain stuff
 - Never import anything inline, every import should be at the top
 - Separate modules and functionalities into their own folders.
 - in the extension, never let functionalities coexist. use classes extensively to simplify the main code spots like background.js

@@ -6,8 +6,6 @@ from .ocr_config import OCRConfig
 from .translation_config import TranslationConfig
 from .capture_config import CaptureConfig, CaptureRegion
 from .overlay_config import OverlayConfig
-from .ai_config import AIConfig, AIClient
-from .ai_config import LocalLLMClient
 from .performance_config import PerformanceConfig
 
 __all__ = [
@@ -16,8 +14,5 @@ __all__ = [
     "CaptureConfig",
     "CaptureRegion",
     "OverlayConfig",
-    "AIConfig",
-    "AIClient",
-    "LocalLLMClient",
     "PerformanceConfig"
 ]
