@@ -1,129 +1,47 @@
 # Dannazione - Browser Extension
 
-Alive agent integrated browser extension built with Lit for real-time language assistance and intelligence.
+Chromium (Manifest V3) extension for select-to-translate, built with Lit. Talks to the local Python backend started by the main application.
 
 ## Features
 
-- 🧠 **Alive Agent Architecture** - Real-time WebSocket connection to agent backend
-- 📸 **Screen Capture** - OCR processing with global hotkeys
-- 🌐 **Translation** - Instant translation of selected text
-- 🤖 **Smart Agent** - Context-aware assistance
-- ⚡ **Lit Components** - Fast, lightweight web components
-- 🎨 **Modern UI** - Clean, gradient-themed interface
+- **Select-to-translate** - select text on any page and get an in-page translation tooltip
+- **Popup** - translate your current selection, pick source/target language, toggle the overlay
+- **Local backend** - all translations go to the MarianMT server on `127.0.0.1:8263` (started by `make run` in the repo root)
 
-## Quick Start
+## Build
 
-### 1. Install Dependencies
+From the repo root:
 
 ```bash
-make install
+make build-extension
 ```
 
-### 2. Build Extension
+Or directly:
 
 ```bash
-make build
+cd src/extension
+npm install
+npm run build
 ```
 
-This will:
-- Prompt you to select environment (LOCAL/DEV/PROD)
-- Build the extension
-- Package it as a ZIP file in `extension_build/`
+## Load in Chromium
 
-### 3. Load in Firefox
-
-#### Development:
-```bash
-make firefox
-```
-
-#### Manual Installation:
-1. Open Firefox
-2. Go to `about:debugging#/runtime/this-firefox`
-3. Click "Load Temporary Add-on"
-4. Navigate to `extension_build/extension_unpacked/` and select `manifest.json`
-
-## Development
-
-### Development Server
-```bash
-make dev
-```
-
-### Quick Build
-```bash
-make quick-build
-```
+1. Build the extension (see above)
+2. Open `chrome://extensions` and enable Developer Mode
+3. "Load unpacked" and select `src/extension/dist`
 
 ## Project Structure
 
 ```
-extension/
-├── src/
-│   ├── background.js          # Service worker, WebSocket agent connection
-│   ├── content.js             # Content script for web pages
-│   ├── popup.js               # Popup UI (Lit component)
-│   ├── index.js              # Dynamic configuration
-│   └── manifest.template.json # Manifest template
-├── public/                    # Static assets
-├── popup.html                 # Popup entry point
-├── Makefile                   # Build system
-├── vite.index.js             # Vite configuration
-└── package.json
+src/extension/src/
+├── background/     # Service worker: message routing, page context push, translation calls
+├── content/        # Content script: selection listener + translation overlay
+├── popup/          # Popup UI (Lit component)
+├── config/         # Backend base URL
+├── dannazione/     # API client for the local backend
+└── styles/         # Shared styles
 ```
 
 ## Configuration
 
-### Environment Selection
-
-During build, select environment:
-- **LOCAL** (0): `ws://localhost:8765`
-- **DEV** (1): `ws://localhost:8766`
-- **PROD** (2): `ws://localhost:8767`
-
-Configuration is in `src/index.js`.
-
-### Agent Backend
-
-The extension connects via WebSocket. Start the agent backend:
-
-```bash
-cd ../..
-python main.py
-```
-
-## Hotkeys
-
-- **Ctrl+Shift+S** - Capture screen for OCR
-- **Ctrl+Shift+A** - Toggle agent overlay
-
-## Build Targets
-
-```bash
-make help              # Show all available targets
-make install           # Install dependencies
-make clean             # Remove build artifacts
-make quick-build       # Fast build
-make build             # Standard build with packaging
-make production        # Production build
-make firefox           # Run in Firefox
-```
-
-## Technologies
-
-- **Lit** - Fast, lightweight web components
-- **Vite** - Lightning-fast build tool
-- **WebSocket** - Real-time agent communication
-- **WebExtension API** - Firefox extension APIs
-
-## Browser Support
-
-- Firefox 109.0+
-
-## Author
-
-lyszt
-
-## License
-
-MIT
+The backend base URL is set in `src/config/index.js` (default `http://127.0.0.1:8263`). The backend must be running (`make run` in the repo root).
