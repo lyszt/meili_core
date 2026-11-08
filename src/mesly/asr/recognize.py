@@ -2,17 +2,24 @@
 Mandarin speech recognition over captured desktop audio (faster-whisper).
 """
 
+import os
+
 import numpy as np
 
 from ..utils import Logger
 
-MODEL_SIZE = "small"
+# Whisper model size. "medium" hears noticeably better than "small" at
+# 3-4x the CPU cost; "large-v3" is not usable on this class of machine.
+# Override with the MESLY_ASR_MODEL environment variable.
+DEFAULT_MODEL = "small"
 
 
 class AsrService:
     """Loads the whisper model once and transcribes utterances."""
 
-    def __init__(self):
+    def __init__(self, model_name: str = None):
+        self.model_name = model_name or os.environ.get(
+            "MESLY_ASR_MODEL", DEFAULT_MODEL)
         self.model = None
         self._load_failed = False
 
@@ -22,10 +29,10 @@ class AsrService:
         if self.model is None:
             try:
                 from faster_whisper import WhisperModel
-                Logger.info("ASR: loading whisper model "
+                Logger.info(f"ASR: loading whisper '{self.model_name}' "
                             "(the first run downloads it)...")
                 self.model = WhisperModel(
-                    MODEL_SIZE, device="cpu", compute_type="int8")
+                    self.model_name, device="cpu", compute_type="int8")
                 Logger.info("ASR: model ready")
             except Exception as e:
                 self._load_failed = True
