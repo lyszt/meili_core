@@ -89,7 +89,7 @@ class OcrService:
         )
         return ""
 
-    def image_to_text(self, image: Image) -> str:
+    def image_to_text(self, image: Image, psm: int = None) -> str:
         """
         OCR a PIL image using the configured languages.
 
@@ -97,13 +97,16 @@ class OcrService:
         faster on single-channel input with no accuracy loss for typical
         screen content (subtitles, UI text). Falls back to a bare 'eng'
         call if anything goes wrong, so a half-configured system still
-        returns whatever OCR it can.
+        returns whatever OCR it can. psm selects tesseract's page
+        segmentation mode (e.g. 7 = treat the image as a single line).
         """
+        tess_config = f"--psm {psm}" if psm else ""
         if self._tessdata_dir:
             try:
                 grayscale = image if image.mode == "L" else image.convert("L")
                 data = pytesseract.image_to_data(
-                    grayscale, lang=self.lang, output_type=Output.DICT)
+                    grayscale, lang=self.lang, config=tess_config,
+                    output_type=Output.DICT)
                 # Word-level entries only: image_to_data also reports the
                 # text at block/paragraph/line level, and keeping those
                 # duplicates the input 4-5x ("we we we we" translations)

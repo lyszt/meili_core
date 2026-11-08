@@ -71,15 +71,16 @@ class OcrWorker(QThread):
     """Runs OCR on a PIL image in a background thread without blocking the GUI."""
     ocr_finished = pyqtSignal(str)
 
-    def __init__(self, ocr_service: OcrService, image):
+    def __init__(self, ocr_service: OcrService, image, psm=None):
         super().__init__()
         self.ocr_service = ocr_service
         self.image = image
+        self.psm = psm
 
     def run(self):
         try:
             t0 = time.perf_counter()
-            text = self.ocr_service.image_to_text(self.image)
+            text = self.ocr_service.image_to_text(self.image, psm=self.psm)
             Logger.info(f"OCR {time.perf_counter() - t0:.2f}s: "
                         f"'{(text or '')[:40]}'")
             self.ocr_finished.emit(text)

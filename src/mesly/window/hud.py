@@ -902,14 +902,18 @@ class HUDWindow(QWidget):
         self._last_watch_region = region
         self._last_watch_ok = False
         crop = Image.fromarray(np.ascontiguousarray(region))
-        # Small subtitle strips read much better at 2x: upscale before
-        # handing to tesseract instead of feeding compressed pixel mush
-        if crop.height < 96:
-            crop = crop.resize((crop.width * 2, crop.height * 2),
+        # Small text needs bigger strokes for chi_sim: scale the crop so
+        # its height reaches ~100px, capped at 4x
+        factor = max(1, min(4, -(-96 // crop.height)))
+        if factor > 1:
+            crop = crop.resize((crop.width * factor, crop.height * factor),
                                Image.LANCZOS)
+        # One-line strips read far better with "single line" page
+        # segmentation than tesseract's default full-page analysis
+        psm = 7 if (y1 - y0) <= 60 else 6
 
         self.status_label.setText("Reading region…")
-        self._region_ocr_worker = OcrWorker(self.ocr_service, crop)
+        self._region_ocr_worker = OcrWorker(self.ocr_service, crop, psm=psm)
         self._region_ocr_worker.ocr_finished.connect(self._on_region_ocr_finished)
         self._region_ocr_worker.start()
 
