@@ -453,7 +453,7 @@ class HUDWindow(QWidget):
         # Copy the hanzi for pasting into notes or a dictionary app
         copy_row = QHBoxLayout()
         copy_row.addStretch(1)
-        self.btn_copy_hanzi = QPushButton("⧉ 拷")
+        self.btn_copy_hanzi = QPushButton("⧉")
         self.btn_copy_hanzi.setObjectName("hud_copy")
         self.btn_copy_hanzi.setToolTip("Copy the hanzi")
         self.btn_copy_hanzi.clicked.connect(self._copy_hanzi)
