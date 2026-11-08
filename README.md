@@ -9,8 +9,6 @@
 
 **MANDARIN STUDY HUD • LOCAL TRANSLATION • TEXT-TO-SPEECH**
 
-*A local-first Chinese study tool*
-
 ---
 
 ## What is this?
