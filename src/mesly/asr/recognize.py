@@ -39,7 +39,8 @@ class AsrService:
             return ""
         try:
             segments, _info = self.model.transcribe(
-                audio, language="zh", vad_filter=True, beam_size=1)
+                audio, language="zh", vad_filter=True, beam_size=1,
+                condition_on_previous_text=False)
             texts = [s.text.strip() for s in segments if s.text.strip()]
             return "".join(texts)
         except Exception as e:

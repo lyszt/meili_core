@@ -4,6 +4,7 @@ emits recognized Mandarin text for the study card.
 """
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from PyQt5.QtCore import QThread, pyqtSignal
@@ -40,8 +41,14 @@ class AsrWorker(QThread):
         super().__init__(parent)
         self.service = AsrService()
         self.capture = None
+        self._executor = None
 
     def run(self):
+        # Transcription runs in its own pool so the capture loop keeps
+        # consuming audio while whisper works (otherwise audio drops and
+        # a quit mid-transcription hangs teardown)
+        self._executor = ThreadPoolExecutor(max_workers=1,
+                                            thread_name_prefix="asr-transcribe")
         self._buffer = np.empty(0, dtype=np.float32)
         self._speech = 0.0
         self._silence = 0.0
@@ -52,6 +59,7 @@ class AsrWorker(QThread):
         self.status.emit("Listening to desktop audio")
         self.capture.read_loop()
         self.capture.stop()
+        self._executor.shutdown(wait=False)
 
     @staticmethod
     def _chunk_is_speech(chunk: np.ndarray) -> bool:
@@ -79,24 +87,25 @@ class AsrWorker(QThread):
         if not done:
             return
         if self._speech >= MIN_SPEECH:
-            seconds = len(self._buffer) / SAMPLE_RATE
-            started = time.perf_counter()
-            text = self.service.transcribe(self._buffer)
-            Logger.info(
-                f"ASR {time.perf_counter() - started:.2f}s "
-                f"({seconds:.1f}s audio): '{text[:60]}'")
-            if text:
-                self.utterance.emit(text)
+            self._executor.submit(self._transcribe, self._buffer.copy())
         self._buffer = np.empty(0, dtype=np.float32)
         self._speech = 0.0
         self._silence = 0.0
 
+    def _transcribe(self, audio: np.ndarray):
+        seconds = len(audio) / SAMPLE_RATE
+        started = time.perf_counter()
+        text = self.service.transcribe(audio)
+        Logger.info(
+            f"ASR {time.perf_counter() - started:.2f}s "
+            f"({seconds:.1f}s audio): '{text[:60]}'")
+        if text:
+            self.utterance.emit(text)
+
     def stop(self):
-        """Patient stop: a transcription in flight can outlive a short
-        timeout, and destroying a running QThread kills the process."""
         if self.capture is not None:
             self.capture.stop()
-        for _ in range(40):
+        for _ in range(20):
             if not self.isRunning():
                 return
             self.wait(500)

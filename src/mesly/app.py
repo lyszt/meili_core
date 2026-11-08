@@ -2,6 +2,7 @@
 Application entry point: hotkeys, capture, OCR, translation, TTS, server.
 """
 
+import os
 import signal
 import sys
 from datetime import datetime
@@ -112,6 +113,9 @@ class MeslyApp:
             self.speech.close()
 
         Logger.info("Cleanup complete")
+        # Hard exit: native inference threads (whisper/ctranslate2)
+        # cannot be interrupted, and a polite exit can hang on them
+        os._exit(0)
 
     def _register_hotkeys(self):
         """Register Ctrl+Alt+S for screenshot."""
