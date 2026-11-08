@@ -15,8 +15,11 @@ from ..utils import Logger
 
 ROOT = Path(__file__).resolve().parents[3]
 
-# Words below this confidence are OCR noise and never reach translation
-MIN_WORD_CONFIDENCE = 55.0
+# Words below this confidence are OCR noise and never reach the card.
+# Real subtitle text over video scores much lower than pristine text, so
+# this bar is deliberately permissive; the fallback below rescues text
+# that dips under it entirely.
+MIN_WORD_CONFIDENCE = 40.0
 
 # config language codes -> Tesseract language codes
 LANG_ALIASES = {
@@ -101,10 +104,15 @@ class OcrService:
                 grayscale = image if image.mode == "L" else image.convert("L")
                 data = pytesseract.image_to_data(
                     grayscale, lang=self.lang, output_type=Output.DICT)
-                # Keep only confident words: misreads never improve a
-                # translation, they turn into garbage on the card
+                # Word-level entries only: image_to_data also reports the
+                # text at block/paragraph/line level, and keeping those
+                # duplicates the input 4-5x ("we we we we" translations)
                 words = []
-                for text, conf in zip(data["text"], data["conf"]):
+                confidences = []
+                for level, text, conf in zip(data["level"], data["text"],
+                                             data["conf"]):
+                    if level != 5:
+                        continue
                     text = text.strip()
                     if not text:
                         continue
@@ -112,8 +120,24 @@ class OcrService:
                         confidence = float(conf)
                     except (TypeError, ValueError):
                         confidence = -1.0
+                    confidences.append(confidence)
                     if confidence >= MIN_WORD_CONFIDENCE:
                         words.append(text)
+                # The filter can be too harsh on hard video frames:
+                # if it killed everything but words existed, fall back to
+                # the unfiltered read so real text is never lost
+                fallback = (not words and confidences
+                            and max(confidences) >= 0)
+                if fallback:
+                    words = []
+                    for level, text, conf in zip(data["level"], data["text"],
+                                                 data["conf"]):
+                        if level == 5 and text.strip():
+                            words.append(text.strip())
+                if confidences:
+                    Logger.info(
+                        f"OCR confidences: {['%.0f' % c for c in confidences]}"
+                        + (" (fallback)" if fallback else ""))
                 return " ".join(words)
             except Exception as e:
                 Logger.error(f"OCR failed with langs '{self.lang}': {e}")

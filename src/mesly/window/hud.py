@@ -196,6 +196,18 @@ class StudyCard(QWidget):
                 font-size: 16px;
                 background: transparent;
             }
+            #hud_copy {
+                background: rgba(255, 255, 255, 24);
+                color: rgba(205, 228, 250, 235);
+                border: 1px solid rgba(255, 255, 255, 36);
+                border-radius: 8px;
+                padding: 3px 12px;
+                font-size: 12px;
+            }
+            #hud_copy:hover {
+                background: rgba(255, 255, 255, 60);
+                color: #ffffff;
+            }
             #hud_dict {
                 color: rgba(205, 228, 250, 215);
                 font-size: 11px;
@@ -438,6 +450,17 @@ class HUDWindow(QWidget):
         self.dict_label.setAlignment(Qt.AlignHCenter)
         card_layout.addWidget(self.dict_label)
 
+        # Copy the hanzi for pasting into notes or a dictionary app
+        copy_row = QHBoxLayout()
+        copy_row.addStretch(1)
+        self.btn_copy_hanzi = QPushButton("⧉ 拷")
+        self.btn_copy_hanzi.setObjectName("hud_copy")
+        self.btn_copy_hanzi.setToolTip("Copy the hanzi")
+        self.btn_copy_hanzi.clicked.connect(self._copy_hanzi)
+        copy_row.addWidget(self.btn_copy_hanzi)
+        copy_row.addStretch(1)
+        card_layout.addLayout(copy_row)
+
         # Fixed text width with manual wrapping: labels can never push the
         # card wider, and size hints stay exact (wordWrap hints size the
         # card badly)
@@ -457,6 +480,7 @@ class HUDWindow(QWidget):
         self._rubber_origin = None
         self._region_ocr_worker = None
         self._last_watch_region = None
+        self._last_watch_ok = False
 
         self._watch_timer = QTimer(self)
         self._watch_timer.timeout.connect(self._watch_tick)
@@ -603,6 +627,13 @@ class HUDWindow(QWidget):
         self._display_hanzi(hanzi, dictionary=dictionary)
         if translate:
             self._start_translation(hanzi)
+
+    def _copy_hanzi(self):
+        if not self.last_hanzi.strip():
+            self.status_label.setText("Nothing to copy yet")
+            return
+        QApplication.clipboard().setText(self.last_hanzi)
+        self.status_label.setText("Copied")
 
     def _on_frame(self, image):
         # Nothing auto-translates on frames; they only feed the picker
@@ -799,9 +830,14 @@ class HUDWindow(QWidget):
         self._watch_mark.show()
         QTimer.singleShot(2000, self._watch_mark.hide)
 
-        self.status_label.setText("Watching the box - new Chinese inside translates automatically (right-click clears)")
-        Logger.info(f"HUD: watch region {rect} -> stream {self.watch_stream_rect}")
+        self.status_label.setText("Watching the box (right-click clears)")
+        frame = self.last_frame
+        Logger.info(
+            f"HUD: overlay {self.width()}x{self.height()}, "
+            f"stream {frame.width}x{frame.height}, "
+            f"region {rect} -> stream {self.watch_stream_rect}")
         self._last_watch_region = None
+        self._last_watch_ok = False
         self._watch_timer.start(int(WATCH_INTERVAL * 1000))
         self._watch_tick()
 
@@ -809,6 +845,7 @@ class HUDWindow(QWidget):
         self.watch_stream_rect = None
         self.watch_region = None
         self._last_watch_region = None
+        self._last_watch_ok = False
         self._watch_mark.hide()
         self._watch_timer.stop()
         self.status_label.setText("Watch cleared")
@@ -846,18 +883,24 @@ class HUDWindow(QWidget):
 
         rect = self.watch_stream_rect
         gray = np.asarray(self.last_frame.convert("L"))
-        x0 = max(0, min(rect.x(), gray.shape[1] - 1))
-        y0 = max(0, min(rect.y(), gray.shape[0] - 1))
-        x1 = max(x0 + 1, min(rect.x() + rect.width(), gray.shape[1]))
-        y1 = max(y0 + 1, min(rect.y() + rect.height(), gray.shape[0]))
+        # Padding absorbs small mapping drift so glyph strokes at the box
+        # edge are not cut (cut strokes read as confidence-0 garbage)
+        PAD = 8
+        x0 = max(0, min(rect.x() - PAD, gray.shape[1] - 1))
+        y0 = max(0, min(rect.y() - PAD, gray.shape[0] - 1))
+        x1 = max(x0 + 1, min(rect.x() + rect.width() + PAD, gray.shape[1]))
+        y1 = max(y0 + 1, min(rect.y() + rect.height() + PAD, gray.shape[0]))
         region = gray[y0:y1, x0:x1]
 
         # Subtitles are static between cuts: skip the whole OCR pass when
-        # the region pixels did not change since the last pass
-        if self._last_watch_region is not None and np.array_equal(
-                region, self._last_watch_region):
+        # the region pixels did not change since the last SUCCESSFUL read.
+        # Skipping on a failed read too would lock a miss in forever on
+        # static content, so empty results always retry.
+        if (self._last_watch_region is not None and self._last_watch_ok
+                and np.array_equal(region, self._last_watch_region)):
             return
         self._last_watch_region = region
+        self._last_watch_ok = False
         crop = Image.fromarray(np.ascontiguousarray(region))
         # Small subtitle strips read much better at 2x: upscale before
         # handing to tesseract instead of feeding compressed pixel mush
@@ -872,6 +915,9 @@ class HUDWindow(QWidget):
 
     def _on_region_ocr_finished(self, text):
         hanzi = cjk_only(text) if text else ""
+        # Remember whether this read succeeded: the pixel-skip only
+        # engages after a successful OCR of the region
+        self._last_watch_ok = bool(hanzi)
         if not hanzi:
             if self.watch_stream_rect is not None:
                 self.status_label.setText("No Chinese in region")
@@ -884,7 +930,10 @@ class HUDWindow(QWidget):
             self.status_label.setText("Unchanged")
             return
 
-        # Watching a subtitle line: card stays lean (hover has the
-        # character-level dictionary)
-        dictionary = self.watch_stream_rect is None
-        self.show_ocr_text(hanzi, dictionary=dictionary)
+        # Watching a subtitle line: no translation (it is a learning
+        # crutch and the small model mangles short fragments anyway).
+        # Card gets hanzi + pinyin instantly; hover has the dictionary.
+        watching = self.watch_stream_rect is not None
+        self.show_ocr_text(hanzi,
+                           dictionary=not watching,
+                           translate=not watching)

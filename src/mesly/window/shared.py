@@ -78,10 +78,9 @@ class OcrWorker(QThread):
 
     def run(self):
         try:
-            Logger.info("OCR starting")
             t0 = time.perf_counter()
             text = self.ocr_service.image_to_text(self.image)
-            Logger.info(f"OCR done in {time.perf_counter() - t0:.2f}s: "
+            Logger.info(f"OCR {time.perf_counter() - t0:.2f}s: "
                         f"'{(text or '')[:40]}'")
             self.ocr_finished.emit(text)
         except Exception as e:
