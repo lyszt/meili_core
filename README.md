@@ -13,7 +13,8 @@
 
 ## What is this?
 
-**Meili** is a transparent always-on-top overlay that translates Chinese from a screen share. It shares a window through the desktop portal (PipeWire, the same mechanism OBS uses), OCRs a region of the stream you mark once, and shows the hanzi with pinyin, a word-by-word dictionary breakdown, and a translation. Everything runs locally.
+
+Meili (美丽) is a software that allows you to translate Chinese live, with a transparent overlay with pinyin and meaning.
 
 ## Features
 
