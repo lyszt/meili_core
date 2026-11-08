@@ -87,17 +87,22 @@ class OcrService:
         """
         OCR a PIL image using the configured languages.
 
-        Falls back to a bare 'eng' call if anything goes wrong, so a
-        half-configured system still returns whatever OCR it can.
+        The image is converted to grayscale first: tesseract runs measurably
+        faster on single-channel input with no accuracy loss for typical
+        screen content (subtitles, UI text). Falls back to a bare 'eng'
+        call if anything goes wrong, so a half-configured system still
+        returns whatever OCR it can.
         """
         if self._tessdata_dir:
             try:
-                return pytesseract.image_to_string(image, lang=self.lang).strip()
+                grayscale = image if image.mode == "L" else image.convert("L")
+                return pytesseract.image_to_string(grayscale, lang=self.lang).strip()
             except Exception as e:
                 Logger.error(f"OCR failed with langs '{self.lang}': {e}")
 
         try:
-            return pytesseract.image_to_string(image).strip()
+            grayscale = image if image.mode == "L" else image.convert("L")
+            return pytesseract.image_to_string(grayscale).strip()
         except Exception as e:
             Logger.error(f"OCR failed: {e}")
             return ""

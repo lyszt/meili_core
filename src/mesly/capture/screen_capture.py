@@ -146,13 +146,16 @@ class ScreenCapture:
 
     def capture_region(self, box) -> Optional[np.ndarray]:
         """
-        Captures an arbitrary screen region (absolute screen coordinates).
+        Captures an arbitrary screen region (absolute screen coordinates)
+        and returns the already-cropped RGB array.
+
+        Chain: MSS -> PyAutoGUI -> full capture cropped to the region.
 
         Args:
-            box: (left, top, width, height)
+            box: (left, top, width, height) in screen coordinates
 
         Returns:
-            RGB numpy array, or None on failure
+            Cropped RGB numpy array, or None on failure
         """
         left, top, width, height = box
         if width <= 0 or height <= 0:
@@ -174,7 +177,19 @@ class ScreenCapture:
             except Exception as e:
                 Logger.debug(f"PyAutoGUI region capture failed: {e}")
 
-        return None
+        # Full-screen capture cropped to the region (Spectacle on KDE
+        # Wayland has no non-interactive rectangle mode)
+        full = self.capture_screen()
+        if full is None:
+            return None
+        frame_h, frame_w = full.shape[:2]
+        x = max(0, min(left, frame_w - 1))
+        y = max(0, min(top, frame_h - 1))
+        crop_w = min(width, frame_w - x)
+        crop_h = min(height, frame_h - y)
+        if crop_w <= 0 or crop_h <= 0:
+            return None
+        return np.ascontiguousarray(full[y:y + crop_h, x:x + crop_w])
 
     def get_primary_monitor_box(self) -> Optional[tuple]:
         """Bounding box (left, top, width, height) of the primary monitor, if known."""

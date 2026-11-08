@@ -18,7 +18,8 @@ from .tts import SpeechSynthesizer
 from .server.server import Server
 from .utils import Logger, HotkeyManager
 from .capture import ScreenCapture
-from .window.main_window import MainWindow
+from .window.hud import HUDWindow
+from PyQt5.QtCore import QRect
 
 
 class HotkeySignals(QObject):
@@ -62,12 +63,13 @@ class MeslyApp:
         self._signal_timer.timeout.connect(lambda: None)
         self._signal_timer.start(200)
 
-        # Local services: OCR, translation (MarianMT) and speech (NeuTTS/gTTS)
+        # Local services: OCR, translation (MarianMT zh->en) and speech (NeuTTS/gTTS)
         self.ocr_service = OcrService(self.config)
-        self.translation_service = TranslationService()
+        self.translation_service = TranslationService(
+            model_name=self.config.translation.model, config=self.config)
         self.speech = SpeechSynthesizer(self.config, specs=self.specs)
 
-        self.window = MainWindow(self.translation_service, self.speech, self.ocr_service)
+        self.window = HUDWindow(self.translation_service, self.speech, self.ocr_service)
         self.window.show()
 
         # Start hotkey listeners
@@ -170,10 +172,15 @@ class MeslyApp:
 
             if ocr_text:
                 Logger.info(f"OCR extracted {len(ocr_text)} characters")
-                self.window.show_ocr_text(ocr_text)
+                # Re-open for display (the previous handle is closed)
+                with Image.open(filepath) as preview_img:
+                    self.window.show_ocr_text(ocr_text, image=preview_img)
             else:
                 Logger.warning("No text found in screenshot")
                 self.window.lbl_status.setText("No text detected in screenshot")
+                # Still show what was captured
+                with Image.open(filepath) as preview_img:
+                    self.window._set_preview(preview_img)
         except Exception as e:
             Logger.error(f"OCR failed: {e}")
             self.window.lbl_status.setText(f"OCR error: {e}")

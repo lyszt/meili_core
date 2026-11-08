@@ -10,7 +10,7 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 from ..utils import Logger
 
-DEFAULT_MODEL = "Helsinki-NLP/opus-mt-mul-en"
+DEFAULT_MODEL = "Helsinki-NLP/opus-mt-zh-en"  # dedicated zh->en model
 CACHE_TTL_SECONDS = 10
 # MarianMT's positional encoding limit
 MAX_MODEL_TOKENS = 512
@@ -19,8 +19,9 @@ MAX_MODEL_TOKENS = 512
 class TranslationService:
     """Loads the local MarianMT model and translates text to English."""
 
-    def __init__(self, model_name: str = DEFAULT_MODEL):
+    def __init__(self, model_name: str = DEFAULT_MODEL, config=None):
         self.model_name = model_name
+        self.config = config
         self.tokenizer = None
         self.model = None
         self.loading = True
@@ -35,11 +36,20 @@ class TranslationService:
             # transformers >= 5 removed the "translation" pipeline task, so
             # load the MarianMT tokenizer/model directly (works on v4 and v5).
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            try:
-                self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name, device_map="auto")
-            except Exception:
-                # No accelerate / no usable GPU: plain CPU load
-                self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name)
+            self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name)
+
+            # GPU only when explicitly configured AND actually usable. On
+            # unsupported cards (e.g. compute capability < 7.0) device_map
+            # schemes either crash with mixed-device errors or run broken
+            # kernels, so the default is plain CPU.
+            if (self.config is not None
+                    and getattr(self.config.performance, "use_gpu", False)):
+                import torch
+                if torch.cuda.is_available():
+                    Logger.info("Translation: moving model to CUDA")
+                    self.model.to("cuda")
+                else:
+                    Logger.warning("Translation: use_gpu set but CUDA unavailable; staying on CPU")
             self.model.eval()
             Logger.info(f"Translation model '{self.model_name}' loaded successfully.")
         except Exception as e:
@@ -173,6 +183,9 @@ class TranslationService:
 
     def _generate(self, text: str) -> str:
         inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=MAX_MODEL_TOKENS)
+        # Guard against mixed devices (model on GPU, inputs on CPU)
+        device = self.model.device
+        inputs = {k: v.to(device) for k, v in inputs.items()}
         output = self.model.generate(**inputs)
         return self.tokenizer.decode(output[0], skip_special_tokens=True).strip()
 

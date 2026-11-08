@@ -117,9 +117,13 @@ class SpeechSynthesizer:
 
     def _synthesize_gtts(self, text: str) -> Optional[Tuple[str, bytes]]:
         try:
+            # Chinese-focused: speak hanzi with the Mandarin voice, anything
+            # else (e.g. English translations) falls back to English
+            has_hanzi = any('\u4e00' <= ch <= '\u9fff' for ch in text)
+            lang = "zh" if has_hanzi else "en"
             byte_io = io.BytesIO()
-            gTTS(text).write_to_buff(byte_io)
-            Logger.debug("Speech: audio synthesized with gTTS")
+            gTTS(text, lang=lang).write_to_buff(byte_io)
+            Logger.debug(f"Speech: audio synthesized with gTTS (lang={lang})")
             return "audio/mpeg", byte_io.getvalue()
         except Exception as e:
             Logger.error(f"Speech: gTTS synthesis failed: {e}")

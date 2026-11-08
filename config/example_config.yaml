@@ -1,18 +1,18 @@
 # Mesly Configuration Example
 # Copy this file to config.yaml and adjust settings
 
-# OCR Settings
+# OCR Settings (Chinese-focused: chi_sim only)
 ocr:
   engine: "pytesseract"
   languages:
-    - "en"
-    - "zh"  # Install the matching Tesseract language packs
+    - "zh"
   confidence_threshold: 0.5
 
-# Translation Settings (local Helsinki-NLP MarianMT, multi-language -> English)
+# Translation Settings (local Helsinki-NLP MarianMT, zh -> en)
 translation:
   service: "helsinki-nlp"
-  source_language: "auto"
+  model: "Helsinki-NLP/opus-mt-zh-en"
+  source_language: "zh"
   target_language: "en"
   cache_enabled: true
 
