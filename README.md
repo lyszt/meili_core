@@ -4,7 +4,8 @@
 
 ---
 
-<img width="736" height="414" alt="image" src="https://github.com/user-attachments/assets/9600986f-47b9-41f8-979f-557508b6ede3" />
+<img width="865" height="427" alt="image" src="https://github.com/user-attachments/assets/4387c585-8eef-4c79-b0fd-69679bf4efb2" />
+
 
 **MANDARIN STUDY HUD • LOCAL TRANSLATION • TEXT-TO-SPEECH**
 
