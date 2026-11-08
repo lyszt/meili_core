@@ -145,7 +145,11 @@ class TranslationService:
 
     def _split_hard(self, text: str) -> list:
         """Sentence-first split; falls back to token-window split for monsters."""
-        sentences = [s for s in text.replace("。", ".\n").replace("！", "!\n").replace("？", "?\n").split(".") if s.strip()]
+        sentences = [
+            s for s in text.replace("。", ".\n")
+            .replace("！", "!\n").replace("？", "?\n")
+            .split(".") if s.strip()]
+
         pieces = []
         for sentence in sentences:
             sentence = sentence.strip()

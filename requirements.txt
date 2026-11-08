@@ -50,3 +50,6 @@ loguru
 
 # Testing
 pytest
+
+# Linting
+flake8

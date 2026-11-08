@@ -7,14 +7,15 @@ with its translation.
 """
 
 import os
+import re
 import tempfile
 import threading
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QApplication, QSizeGrip,
-                             QRubberBand)
-from PyQt5.QtCore import Qt, QRect, QPoint, QSize, QTimer, QUrl, pyqtSignal
-from PyQt5.QtGui import QClipboard, QColor, QCursor, QPainter, QPen
+                             QRubberBand, QStyle, QStyleOption, QToolTip)
+from PyQt5.QtCore import Qt, QRect, QSize, QTimer, QUrl, pyqtSignal
+from PyQt5.QtGui import QClipboard, QColor, QCursor, QFontMetrics, QPainter, QPen
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 
 import numpy as np
@@ -26,20 +27,38 @@ from ..ocr import OcrService, cjk_only
 from ..translation import TranslationService
 from ..tts import SpeechSynthesizer
 from ..utils import Logger
-from .shared import TranslationWorker, OcrWorker, capped_window_size, pil2pixmap
+from .shared import TranslationWorker, OcrWorker, capped_window_size
 
-# Window size caps (bar height is a fallback; the HUD starts maximized)
 BAR_WIDTH_FRACTION = 0.99
 BAR_HEIGHT = 690
 
-# Minimum watch region size (pixels, stream space)
+# Minimum drag size (pixels)
 MIN_REGION_SIZE = 24
-# Watch region poll interval (seconds); chi_sim OCR dominates the cycle
-WATCH_INTERVAL = 3.0
-# Distance between the watch region top and the text block
-TEXT_REGION_GAP = 10
-# Default lift of the text block from the bottom edge
-DEFAULT_TEXT_LIFT = 36
+# Usable text width inside the study card
+CARD_TEXT_WIDTH = 640
+# Watch poll interval (seconds)
+WATCH_INTERVAL = .5
+
+
+def wrap_dictionary(entries, max_units=110):
+    """Join breakdown entries with explicit line breaks instead of relying
+    on wrapped-size hints, which size the card badly. One CJK character
+    counts double."""
+    def units(item):
+        return sum(2 if ord(ch) > 0x2E7F else 1 for ch in item)
+
+    lines = []
+    current = ""
+    for entry in entries:
+        piece = entry if not current else "  ·  " + entry
+        if current and units(current) + units(piece) > max_units:
+            lines.append(current)
+            current = entry
+        else:
+            current = piece
+    if current:
+        lines.append(current)
+    return "\n".join(lines)
 
 
 class DragGrip(QWidget):
@@ -54,7 +73,10 @@ class DragGrip(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self.hud._start_window_drag(QCursor.pos())
+            if not self.hud._start_window_drag(QCursor.pos()):
+                event.ignore()
+            else:
+                event.accept()
 
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.LeftButton:
@@ -65,6 +87,135 @@ class DragGrip(QWidget):
 
     def mouseDoubleClickEvent(self, event):
         self.hud._toggle_maximize()
+
+
+def start_system_move(widget) -> bool:
+    """Ask the compositor to drag the window. On Wayland a client cannot
+    move its own top-level windows (self.move() is ignored), the drag
+    must go through the compositor via startSystemMove."""
+    window = widget.window()
+    handle = window.windowHandle() if window is not None else None
+    if handle is None:
+        return False
+    try:
+        handle.startSystemMove()
+        return True
+    except Exception:
+        return False
+
+
+def wrap_to_width(text, metrics, max_width):
+    """Word-wrap into explicit newlines so the label never depends on
+    wrapped-size hints, which size the card badly."""
+    words = text.split()
+    if not words:
+        return text
+    lines = []
+    current = words[0]
+    for word in words[1:]:
+        if metrics.horizontalAdvance(current + " " + word) <= max_width:
+            current += " " + word
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return "\n".join(lines)
+
+
+class CardGrip(QWidget):
+    """Drag pill at the top of the study card."""
+
+    def __init__(self, card, parent=None):
+        super().__init__(parent)
+        self.card = card
+        self.setFixedSize(40, 6)
+        self.setObjectName("hud_card_grip")
+        self.setCursor(Qt.SizeAllCursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.card.start_drag(event.globalPos()):
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
+class StudyCard(QWidget):
+    """The study text box: a child of the overlay, raised above all other
+    overlay elements, drag it anywhere inside the overlay. Dragging a
+    child widget is client-side, so this works on Wayland (unlike moving
+    the window itself)."""
+
+    def __init__(self, hud, parent=None):
+        super().__init__(parent)
+        self.hud = hud
+        self.setObjectName("hud_card")
+        self._drag_offset = None
+        self.setCursor(Qt.SizeAllCursor)
+        self.setStyleSheet("""
+            #hud_card {
+                background: rgba(8, 10, 16, 165);
+                border-radius: 14px;
+                border: 1px solid rgba(255, 255, 255, 26);
+            }
+            #hud_card_grip {
+                background: rgba(255, 255, 255, 70);
+                border-radius: 3px;
+            }
+            #hud_hanzi {
+                color: rgba(232, 240, 252, 235);
+                font-size: 15px;
+                font-weight: 500;
+                background: transparent;
+            }
+            #hud_translation {
+                color: #ffffff;
+                font-size: 18px;
+                font-weight: 600;
+                background: transparent;
+            }
+            #hud_pinyin {
+                color: #a8d8ff;
+                font-size: 13px;
+                background: transparent;
+            }
+            #hud_dict {
+                color: rgba(205, 228, 250, 215);
+                font-size: 11px;
+                background: transparent;
+            }
+        """)
+
+    def paintEvent(self, event):
+        opt = QStyleOption()
+        opt.initFrom(self)
+        painter = QPainter(self)
+        self.style().drawPrimitive(QStyle.PE_Widget, opt, painter, self)
+
+    def start_drag(self, global_pos):
+        """Start a client-side drag from anywhere; returns True if
+        grabbed."""
+        if self.parentWidget() is None:
+            return False
+        self._drag_offset = self.mapFromGlobal(global_pos)
+        return True
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.start_drag(event.globalPos()):
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_offset is not None and event.buttons() & Qt.LeftButton:
+            parent = self.parentWidget()
+            self.move(parent.mapFromGlobal(event.globalPos()) - self._drag_offset)
+            self.hud._card_moved = True
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_offset = None
 
 
 class OutlineLabel(QLabel):
@@ -86,7 +237,7 @@ class OutlineLabel(QLabel):
         painter.setFont(font)
         pen = QPen(QColor(0, 0, 0, 220))
         painter.setPen(pen)
-        # Outline: draw the text offset in 8 directions
+        # Text offset in 8 directions
         for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1),
                        (-1, -1), (1, -1), (-1, 1), (1, 1)):
             painter.drawText(rect.adjusted(dx, dy, dx, dy), align, text)
@@ -94,100 +245,64 @@ class OutlineLabel(QLabel):
         painter.setPen(QPen(self.palette().color(self.foregroundRole())))
         painter.drawText(rect, align, text)
 
-
-class StreamPicker(QWidget):
-    """Frozen stream frame the user draws the watch region on. The region
-    is returned in stream coordinates, so it never depends on where the
-    overlay or window sits on screen.
-
-    Signals:
-        picked(stream_rect, scale, panel_top_left_global)
-        cancelled()
-    """
-
-    picked = pyqtSignal(object, object, object)
-    cancelled = pyqtSignal()
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.setObjectName("hud_picker")
-        self.image_label = QLabel(self)
-        self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setGeometry(0, 0, 1, 1)
-        self._rubber = QRubberBand(QRubberBand.Rectangle, self)
-        self._rubber.hide()
-        self._origin = None
-        self._scale = 1.0
-        self.setStyleSheet("""
-            #hud_picker {
-                background: rgba(10, 12, 16, 140);
-            }
-        """)
-
-    def freeze(self, frame) -> bool:
-        """Show the given PIL frame scaled to fit; False if there is none."""
-        if frame is None:
-            return False
-        parent = self.parentWidget()
-        if parent is None:
-            return False
-        parent_geo = parent.geometry()
-        max_w = max(200, int(parent_geo.width() * 0.72))
-        max_h = max(150, int(parent_geo.height() * 0.72))
-        pixmap = pil2pixmap(frame)
-        if pixmap.width() < 10:
-            return False
-        scaled = pixmap.scaled(max_w, max_h, Qt.KeepAspectRatio,
-                               Qt.SmoothTransformation)
-        self._scale = scaled.width() / pixmap.width()
-        self.image_label.setPixmap(scaled)
-        self.setGeometry(QRect(
-            parent_geo.center().x() - scaled.width() // 2,
-            parent_geo.center().y() - scaled.height() // 2,
-            scaled.width(), scaled.height()))
-        self.image_label.setGeometry(self.rect())
-        self.show()
-        self.raise_()
-        return True
-
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton and self._origin is None:
-            self._origin = event.pos()
-            self._rubber.setGeometry(QRect(self._origin, QSize()))
-            self._rubber.show()
-            event.accept()
-        elif event.button() == Qt.RightButton:
-            self.cancelled.emit()
-            event.accept()
+        # Clicking anywhere on the text drags the study card, so the
+        # whole surface is a grab area
+        if event.button() == Qt.LeftButton:
+            hud = self.window()
+            card = getattr(hud, "card", None)
+            if card is not None and card.start_drag(event.globalPos()):
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+
+class HanziLabel(OutlineLabel):
+    """Hanzi line with a per-character hover tooltip: pinyin + gloss."""
+
+    def __init__(self, hud, parent=None):
+        super().__init__("", parent)
+        self.hud = hud
+        self.setMouseTracking(True)
 
     def mouseMoveEvent(self, event):
-        if self._origin is not None and event.buttons() & Qt.LeftButton:
-            self._rubber.setGeometry(
-                QRect(self._origin, event.pos()).normalized())
-            event.accept()
+        self._show_char_tooltip(event.pos(), event.globalPos())
+        event.accept()
 
-    def mouseReleaseEvent(self, event):
-        if self._origin is not None and event.button() == Qt.LeftButton:
-            rect = QRect(self._origin, event.pos()).normalized()
-            self._origin = None
-            self._rubber.hide()
-            if rect.width() >= MIN_REGION_SIZE and rect.height() >= MIN_REGION_SIZE:
-                stream_rect = QRect(
-                    round(rect.x() / self._scale),
-                    round(rect.y() / self._scale),
-                    round(rect.width() / self._scale),
-                    round(rect.height() / self._scale))
-                self.picked.emit(
-                    stream_rect, self._scale,
-                    self.parentWidget().mapToGlobal(self.pos()))
-            else:
-                self.cancelled.emit()
-            event.accept()
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self.cancelled.emit()
-            event.accept()
+    def _show_char_tooltip(self, pos, global_pos):
+        text = self.text()
+        if not text or self.hud is None or self.hud.cedict is None:
+            QToolTip.hideText()
+            return
+        fm = QFontMetrics(self.font())
+        width = fm.horizontalAdvance(text)
+        # Center-aligned single line: hit-test the character under the tip
+        left = (self.contentsRect().width() - width) // 2
+        x = pos.x() - left
+        if x < 0 or x >= width:
+            QToolTip.hideText()
+            return
+        index = 0
+        while (index < len(text) - 1
+               and fm.horizontalAdvance(text[:index + 1]) <= x):
+            index += 1
+        ch = text[index]
+        if not re.match(r"[\u3400-\u4dbf\u4e00-\u9fff]", ch):
+            QToolTip.hideText()
+            return
+        if not self.hud.cedict.load():
+            QToolTip.hideText()
+            return
+        entry = self.hud.cedict.lookup(ch)
+        if entry is None:
+            QToolTip.hideText()
+            return
+        _, dict_pinyin, glosses = entry
+        # CC-CEDICT stores tone numbers (shi4); pypinyin can render this
+        # single character with real tone marks instead
+        pinyin = char_pinyin(ch) or dict_pinyin
+        QToolTip.showText(global_pos,
+                          f"{ch}  {pinyin}\n" + "\n".join(glosses[:4]))
 
 
 class HUDWindow(QWidget):
@@ -267,63 +382,65 @@ class HUDWindow(QWidget):
         bottom_row.addStretch(1)
         self.size_grip = QSizeGrip(self)
         bottom_row.addWidget(self.size_grip)
-        layout.addLayout(bottom_row)
 
-        # --- Center is empty transparency ---
-        layout.addStretch(1)
+        # --- Study card: floating always-on-top window with the study text ---
+        self.card = StudyCard(self, self)
+        self.card.setMinimumSize(320, 70)
+        card_layout = QVBoxLayout(self.card)
+        card_layout.setContentsMargins(26, 8, 26, 14)
+        card_layout.setSpacing(4)
+        self._card_moved = False
 
-        # --- Bottom: hanzi + pinyin + breakdown + translation, bottom-center ---
-        text_block = QWidget()
-        text_layout = QVBoxLayout(text_block)
-        text_layout.setContentsMargins(48, 0, 48, 0)
-        text_layout.setSpacing(2)
+        grip_row = QHBoxLayout()
+        grip_row.setContentsMargins(0, 0, 0, 3)
+        grip_row.addStretch(1)
+        self.card_grip = CardGrip(self.card)
+        grip_row.addWidget(self.card_grip)
+        grip_row.addStretch(1)
+        card_layout.addLayout(grip_row)
 
-        self.hanzi_label = OutlineLabel("框选字幕区")
+        self.hanzi_label = HanziLabel(self)
         self.hanzi_label.setObjectName("hud_hanzi")
         self.hanzi_label.setWordWrap(True)
         self.hanzi_label.setAlignment(Qt.AlignHCenter)
-        text_layout.addWidget(self.hanzi_label)
-
-        # Pinyin + dictionary breakdown are always shown (this app is the
-        # study mode)
-        self.pinyin_label = OutlineLabel("")
-        self.pinyin_label.setObjectName("hud_pinyin")
-        self.pinyin_label.setWordWrap(True)
-        self.pinyin_label.setAlignment(Qt.AlignHCenter)
-        text_layout.addWidget(self.pinyin_label)
-
-        self.dict_label = OutlineLabel("")
-        self.dict_label.setObjectName("hud_dict")
-        self.dict_label.setWordWrap(True)
-        self.dict_label.setAlignment(Qt.AlignHCenter)
-        text_layout.addWidget(self.dict_label)
+        self.hanzi_label.setText("框选字幕区")
+        card_layout.addWidget(self.hanzi_label)
 
         self.translation_label = OutlineLabel("")
         self.translation_label.setObjectName("hud_translation")
         self.translation_label.setWordWrap(True)
         self.translation_label.setAlignment(Qt.AlignHCenter)
-        text_layout.addWidget(self.translation_label)
+        card_layout.addWidget(self.translation_label)
 
-        text_row = QHBoxLayout()
-        text_row.addStretch(1)
-        text_row.addWidget(text_block)
-        text_row.addStretch(1)
-        layout.addLayout(text_row)
-        self.text_block = text_block
+        self.pinyin_label = OutlineLabel("")
+        self.pinyin_label.setObjectName("hud_pinyin")
+        self.pinyin_label.setWordWrap(True)
+        self.pinyin_label.setAlignment(Qt.AlignHCenter)
+        card_layout.addWidget(self.pinyin_label)
 
-        # Keeps the text off the bottom edge and above the watch region
-        self._lift_spacer = QWidget()
-        self._lift_spacer.setFixedHeight(DEFAULT_TEXT_LIFT)
-        layout.addWidget(self._lift_spacer)
+        self.dict_label = OutlineLabel("")
+        self.dict_label.setObjectName("hud_dict")
+        self.dict_label.setWordWrap(True)
+        self.dict_label.setAlignment(Qt.AlignHCenter)
+        card_layout.addWidget(self.dict_label)
 
-        # Marker over the designated area; watch_rect is stored in stream
-        # coordinates, this screen rectangle only positions the marker
-        # and the text lift
+        # Hard width cap: nothing can force the card wider than this, so
+        # the card window never grows to cover clicks meant for the
+        # overlay (e.g. region selection)
+        for label in (self.hanzi_label, self.pinyin_label,
+                      self.dict_label, self.translation_label):
+            label.setMaximumWidth(CARD_TEXT_WIDTH)
+
+        layout.addStretch(1)
+        layout.addLayout(bottom_row)
         self._watch_mark = QWidget(self)
         self._watch_mark.setObjectName("hud_watch_mark")
         self._watch_mark.hide()
         self.watch_stream_rect = None
         self.watch_region = None
+        self._rubber_band = QRubberBand(QRubberBand.Rectangle, self)
+        self._rubber_origin = None
+        self._region_ocr_worker = None
 
         self._watch_timer = QTimer(self)
         self._watch_timer.timeout.connect(self._watch_tick)
@@ -332,30 +449,9 @@ class HUDWindow(QWidget):
             HUDWindow {
                 background: transparent;
             }
-            #hud_hanzi {
-                color: #ffffff;
-                font-size: 24px;
-                font-weight: 600;
-                background: transparent;
-            }
-            #hud_translation {
-                color: #bfe8ff;
-                font-size: 16px;
-                background: transparent;
-            }
-            #hud_pinyin {
-                color: rgba(255, 255, 255, 245);
-                font-size: 13px;
-                background: transparent;
-            }
-            #hud_dict {
-                color: rgba(230, 248, 255, 235);
-                font-size: 12px;
-                background: transparent;
-            }
             #hud_watch_mark {
-                border: 2px solid rgba(140, 200, 255, 190);
-                border-radius: 4px;
+                border: 1px solid rgba(160, 210, 255, 70);
+                border-radius: 3px;
                 background: transparent;
             }
             #hud_status {
@@ -379,19 +475,12 @@ class HUDWindow(QWidget):
 
         self._drag_offset = None
         self._normal_geometry = None
-        self._frame_picker = None
-        self._region_ocr_worker = None
 
-        # CEDICT parse is slow: load in the background
         self.cedict = CEDict()
         self._cedict_loader = threading.Thread(
             target=self.cedict.load, daemon=True, name="cedict-load")
         self._cedict_loader.start()
 
-        # Translations only happen on explicit intent: a selection change
-        # or the watch region. The primary selection is sticky (it holds
-        # the last thing selected anywhere), so the first signal at
-        # startup is the compositor's greeting, not a user action.
         self._last_selection = ""
         self._selection_signals_seen = 0
         QApplication.clipboard().selectionChanged.connect(self._on_selection_changed)
@@ -404,6 +493,7 @@ class HUDWindow(QWidget):
         super().showEvent(event)
         if not self.isMaximized() and self._normal_geometry is None:
             self.showMaximized()
+        self._sync_card()
         if not portal_available():
             self.status_label.setText("Portal unavailable (install python-gobject, gst-plugin-pipewire)")
             return
@@ -425,16 +515,22 @@ class HUDWindow(QWidget):
             self.capture_thread = None
         self.status_label.setText("Stopped")
 
-    def _quit(self):
+    def shutdown(self):
+        """Stop every thread before exit: a QThread destroyed while
+        running aborts the whole process."""
+        self._watch_timer.stop()
+        if self._region_ocr_worker is not None and self._region_ocr_worker.isRunning():
+            self._region_ocr_worker.wait(5000)
+        if self.translation_worker is not None and self.translation_worker.isRunning():
+            self.translation_worker.wait(5000)
         self.stop_stream()
+
+    def _quit(self):
+        self.shutdown()
         QApplication.quit()
 
     def closeEvent(self, event):
-        self.stop_stream()
-        if self.translation_worker and self.translation_worker.isRunning():
-            self.translation_worker.wait(2000)
-        if self.speech:
-            self.speech.close()
+        self.shutdown()
         event.accept()
 
     # ------------------------------------------------------------------
@@ -452,8 +548,9 @@ class HUDWindow(QWidget):
         """Show the study layer: hanzi, pinyin, dictionary breakdown."""
         self.hanzi_label.setText(hanzi)
         self.pinyin_label.setText(char_pinyin(hanzi))
-        dictionary_lines = self.cedict.breakdown(hanzi)
-        self.dict_label.setText("  ·  ".join(dictionary_lines))
+        entries = self.cedict.breakdown(hanzi)
+        self.dict_label.setText(wrap_dictionary(entries))
+        self._sync_card()
 
     def _start_translation(self, hanzi: str):
         if self.translation_worker is not None and self.translation_worker.isRunning():
@@ -522,12 +619,20 @@ class HUDWindow(QWidget):
     def _on_translation(self, result):
         translation = result.get("translation", "")
         self.last_translation = translation
-        self.translation_label.setText(translation)
+        self.translation_label.setText(
+            wrap_to_width(translation,
+                          self.translation_label.fontMetrics(),
+                          CARD_TEXT_WIDTH))
         self.status_label.setText("Translated")
+        self._sync_card()
 
     def _on_translation_error(self, message):
-        self.translation_label.setText(f"(translation failed: {message})")
+        self.translation_label.setText(
+            wrap_to_width(f"(translation failed: {message})",
+                          self.translation_label.fontMetrics(),
+                          CARD_TEXT_WIDTH))
         self.status_label.setText("Translation error")
+        self._sync_card()
 
     # ------------------------------------------------------------------
     # Speech
@@ -566,7 +671,7 @@ class HUDWindow(QWidget):
 
     def _on_audio_error(self, error):
         Logger.error(f"Audio playback error: {error}")
-        self.status_label.setText(f"Audio error")
+        self.status_label.setText("Audio error")
 
     # ------------------------------------------------------------------
     # Window chrome: drag, maximize, restore
@@ -584,7 +689,9 @@ class HUDWindow(QWidget):
             self.btn_max.setText("❐")
 
     def _start_window_drag(self, global_pos):
-        """Drag grip handler: maximized windows restore then follow."""
+        """Drag grip handler: maximized windows restore first. The drag
+        itself goes through the compositor (Wayland forbids clients
+        moving their own windows). Returns True if a drag started."""
         if self.isMaximized():
             if self._normal_geometry is None:
                 self._normal_geometry = QRect(global_pos.x() - 400,
@@ -597,6 +704,7 @@ class HUDWindow(QWidget):
             self.setGeometry(proposed)
             self.btn_max.setText("□")
         self._drag_offset = global_pos - self.frameGeometry().topLeft()
+        return start_system_move(self)
 
     def _window_drag_move(self, global_pos):
         if self._drag_offset is not None:
@@ -610,8 +718,27 @@ class HUDWindow(QWidget):
     # ------------------------------------------------------------------
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._open_stream_picker()
+        # Left drag draws the watch region right over the live video:
+        # nothing is shown or frozen, only a thin rubber band.
+        if event.button() == Qt.LeftButton and self._rubber_origin is None:
+            self._rubber_origin = event.pos()
+            self._rubber_band.setGeometry(QRect(self._rubber_origin, QSize()))
+            self._rubber_band.show()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._rubber_origin is not None and event.buttons() & Qt.LeftButton:
+            self._rubber_band.setGeometry(
+                QRect(self._rubber_origin, event.pos()).normalized())
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self._rubber_origin is not None:
+            rect = QRect(self._rubber_origin, event.pos()).normalized()
+            self._rubber_origin = None
+            self._rubber_band.hide()
+            if rect.width() >= MIN_REGION_SIZE and rect.height() >= MIN_REGION_SIZE:
+                self._set_watch_region(rect)
             event.accept()
 
     def mouseDoubleClickEvent(self, event):
@@ -623,47 +750,33 @@ class HUDWindow(QWidget):
             self._clear_watch_region()
         event.accept()
 
-    def _open_stream_picker(self):
-        if self.last_frame is None:
-            self.status_label.setText("Stream not started yet - pick a window in the system dialog first")
+    def _set_watch_region(self, rect):
+        """Convert the drawn overlay rectangle into stream coordinates.
+
+        The overlay covers the same screen area as the shared window in
+        the normal use case (maximized/fullscreen video), so the box the
+        user draws over what they see maps onto the stream by the ratio
+        of the two sizes.
+        """
+        frame = self.last_frame
+        if frame is None or frame.width < 1:
+            self.status_label.setText("Stream not started yet")
             return
-        if self._frame_picker is None:
-            self._frame_picker = StreamPicker(self)
-            self._frame_picker.picked.connect(self._on_region_picked)
-            self._frame_picker.cancelled.connect(self._on_picker_cancelled)
-        if self._frame_picker.freeze(self.last_frame):
-            self.status_label.setText("Draw a box over the subtitles (right-click / Esc to cancel)")
-        else:
-            self.status_label.setText("No frame available from the stream yet")
-        self._frame_picker.setFocus()
+        fw, fh = frame.size
+        sx = fw / max(1, self.width())
+        sy = fh / max(1, self.height())
+        self.watch_stream_rect = QRect(
+            round(rect.x() * sx), round(rect.y() * sy),
+            round(rect.width() * sx), round(rect.height() * sy))
+        # Overlay-local rectangle
+        self.watch_region = QRect(rect)
 
-    def _on_picker_cancelled(self):
-        if self._frame_picker is not None:
-            self._frame_picker.hide()
-        self.status_label.setText("Pick cancelled")
-
-    def _on_region_picked(self, stream_rect, scale, panel_top_global):
-        """Store the stream-space rect, mark its screen position, watch."""
-        if self._frame_picker is not None:
-            self._frame_picker.hide()
-        self.watch_stream_rect = QRect(stream_rect)
-
-        # Screen rectangle for the marker and text lift only; scaling
-        # can shift it, which is acceptable for pure visuals
-        screen_top = panel_top_global + QPoint(
-            round(stream_rect.x() * scale), round(stream_rect.y() * scale))
-        self.watch_region = QRect(
-            screen_top,
-            QSize(round(stream_rect.width() * scale),
-                  round(stream_rect.height() * scale)))
-        local_top = self.mapFromGlobal(screen_top)
-        self._watch_mark.setGeometry(
-            QRect(local_top, self.watch_region.size()).adjusted(-2, -2, 2, 2))
+        self._watch_mark.setGeometry(self.watch_region.adjusted(-2, -2, 2, 2))
         self._watch_mark.show()
-        self._update_lift()
+        QTimer.singleShot(2000, self._watch_mark.hide)
 
-        self.status_label.setText("Watching region - new Chinese there translates automatically (right-click to clear)")
-        Logger.info(f"HUD: watch region set at stream {stream_rect}")
+        self.status_label.setText("Watching the box - new Chinese inside translates automatically (right-click clears)")
+        Logger.info(f"HUD: watch region {rect} -> stream {self.watch_stream_rect}")
         self._watch_timer.start(int(WATCH_INTERVAL * 1000))
         self._watch_tick()
 
@@ -671,33 +784,30 @@ class HUDWindow(QWidget):
         self.watch_stream_rect = None
         self.watch_region = None
         self._watch_mark.hide()
-        self._lift_spacer.setFixedHeight(DEFAULT_TEXT_LIFT)
         self._watch_timer.stop()
-        if self._frame_picker is not None and self._frame_picker.isVisible():
-            self._frame_picker.hide()
         self.status_label.setText("Watch cleared")
         Logger.info("HUD: watch region cleared")
 
-    def _update_lift(self):
-        """Push the centered text block above the watch region."""
-        if self.watch_region is None:
-            self._lift_spacer.setFixedHeight(DEFAULT_TEXT_LIFT)
-            return
-        region_top_local = self.mapFromGlobal(self.watch_region.topLeft()).y()
-        needed = self.height() - region_top_local + TEXT_REGION_GAP
-        self._lift_spacer.setFixedHeight(
-            max(DEFAULT_TEXT_LIFT, min(needed, self.height() // 2)))
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._update_lift()
-        self._recenter_watch_mark()
-
-    def _recenter_watch_mark(self):
+        self._sync_card()
         if self.watch_region is not None:
-            top_left = self.mapFromGlobal(self.watch_region.topLeft())
-            self._watch_mark.setGeometry(
-                QRect(top_left, self.watch_region.size()).adjusted(-2, -2, 2, 2))
+            self._watch_mark.setGeometry(self.watch_region.adjusted(-2, -2, 2, 2))
+
+    def _sync_card(self):
+        """Fit the card to its text. Default: top-center of the overlay;
+        after a drag it stays where put, clamped to the overlay."""
+        if not self.card.isVisible():
+            self.card.show()
+        self.card.raise_()
+        self.card.adjustSize()
+        if not self._card_moved:
+            self.card.move(max(0, (self.width() - self.card.width()) // 2), 44)
+            return
+        x = max(0, min(self.card.x(), self.width() - self.card.width()))
+        y = max(0, min(self.card.y(),
+                       max(0, self.height() - self.card.height())))
+        self.card.move(x, y)
 
     def _watch_tick(self):
         """Periodic pass over the designated region: crop the latest

@@ -41,7 +41,10 @@ class GPUConfig:
                 )
                 # Force CPU mode only for incompatible GPU
                 os.environ['CUDA_VISIBLE_DEVICES'] = ''
-                self._set_cpu(f"GPU incompatible (CUDA capability {gpu_capability[0]}.{gpu_capability[1]} < {min_capability[0]}.{min_capability[1]})")
+                self._set_cpu(
+                    f"GPU incompatible (CUDA capability "
+                    f"{gpu_capability[0]}.{gpu_capability[1]} < "
+                    f"{min_capability[0]}.{min_capability[1]})")
             else:
                 # GPU is compatible - use it
                 self.device = torch.device("cuda:0")
@@ -82,7 +85,7 @@ class GPUConfig:
                 capability = torch.cuda.get_device_capability(0)
                 info["cuda_capability"] = f"{capability[0]}.{capability[1]}"
                 info["gpu_name"] = torch.cuda.get_device_name(0)
-            except:
+            except Exception:
                 pass
 
         return info

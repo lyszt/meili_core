@@ -42,10 +42,10 @@ class ConfigTemplate:
         if self.filepath.exists():
             Logger.info(f"Loading configuration from {self.filepath}")
             self._load()
-            Logger.info(f"Configuration loaded successfully")
+            Logger.info("Configuration loaded successfully")
         else:
             Logger.warning(f"Configuration file not found at {self.filepath}")
-            Logger.info(f"Creating default configuration...")
+            Logger.info("Creating default configuration...")
             self.save()
             Logger.info(f"Default configuration saved to {self.filepath}")
 

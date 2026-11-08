@@ -6,6 +6,7 @@
 #   vendor          - init/update git submodules (vendor) if present
 #   build-extension - run npm install and npm run build in src/extension
 #   run             - run the Mesly application
+#   lint            - run flake8 over the Python sources
 #   clean           - remove common build artifacts
 
 PY ?= python3
@@ -16,7 +17,7 @@ VENV_DIR = .venv
 # List of vendored repositories to ensure present locally.
 VENDOR_REPOS ?= neutts:https://github.com/neuphonic/neutts
 
-.PHONY: all venv install-pip vendor build-extension run clean
+.PHONY: all venv install-pip vendor build-extension lint run clean
 
 all: install-pip vendor build-extension
 	@echo "All done. Extension built and python requirements installed."
@@ -70,6 +71,10 @@ build-extension:
 	else \
 		echo "Extension directory or package.json not found at $(EXT_DIR). Skipping build."; \
 	fi
+
+lint:
+	@echo "Linting Python sources..."
+	$(PY) -m flake8 .
 
 run:
 	@echo "Running Mesly..."

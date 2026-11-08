@@ -83,7 +83,7 @@ class MainWindow(QMainWindow):
         if self.screen_capture.capture_and_save(filepath):
             self.status_label.setText(f"Screenshot saved!\n\n{filepath}\n\nPress Ctrl+Alt+S to capture again")
         else:
-            self.status_label.setText(f"Failed to capture screenshot\n\nPress Ctrl+Alt+S to try again")
+            self.status_label.setText("Failed to capture screenshot\n\nPress Ctrl+Alt+S to try again")
 
     def closeEvent(self, event):
         """Handle window close event"""

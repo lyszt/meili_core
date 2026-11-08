@@ -71,7 +71,7 @@ class ScreenCapture:
                     check=False
                 )
                 return result.returncode == 0
-            except:
+            except Exception:
                 return False
 
         desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").upper()
@@ -215,4 +215,3 @@ class ScreenCapture:
         if self.sct:
             return self.sct.monitors
         return []
-

@@ -1,0 +1,16 @@
+[flake8]
+max-line-length = 120
+extend-ignore = E203, W503
+exclude =
+    .venv,
+    vendor,
+    src/extension,
+    data,
+    libs,
+    scripts
+# E402 in these files comes from the sys.path bootstrap and the
+# gi.require_version() call that must precede the gi imports
+per-file-ignores =
+    main.py:E402
+    examples/*:E402
+    src/mesly/capture/portal_worker.py:E402

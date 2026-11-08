@@ -16,11 +16,9 @@ Protocol on stdout (relayed from the streamer):
 
 import fcntl
 import json
-import os
 import random
 import subprocess
 import sys
-import time
 
 import gi
 gi.require_version("Gst", "1.0")

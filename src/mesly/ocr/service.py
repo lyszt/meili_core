@@ -4,7 +4,6 @@ then runs Tesseract on captured images.
 """
 
 import os
-import subprocess
 
 import pytesseract
 from pathlib import Path

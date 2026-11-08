@@ -19,7 +19,6 @@ from .server.server import Server
 from .utils import Logger, HotkeyManager
 from .capture import ScreenCapture
 from .window.hud import HUDWindow
-from PyQt5.QtCore import QRect
 
 
 class HotkeySignals(QObject):
@@ -98,6 +97,9 @@ class MeslyApp:
     def _cleanup(self):
         """Cleanup resources before application exit."""
         Logger.info("Cleaning up resources...")
+
+        if self.window:
+            self.window.shutdown()
 
         if self.hotkey_manager:
             self.hotkey_manager.stop()
