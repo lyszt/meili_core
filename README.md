@@ -1,6 +1,6 @@
-# DANNAZIONE DI PROVVIDENZA
+# 美丽 (MEILI)
 
-> *"Damnation of Providence / Damn Providence"*
+> *美丽 (Meili) means "beautiful".*
 
 ---
 
@@ -14,7 +14,7 @@
 
 ## What is this?
 
-**Dannazione di Provvidenza** is a transparent always-on-top overlay that translates Chinese from a screen share. It shares a window through the desktop portal (PipeWire, the same mechanism OBS uses), OCRs a region of the stream you mark once, and shows the hanzi with pinyin, a word-by-word dictionary breakdown, and a translation. Everything runs locally.
+**Meili** is a transparent always-on-top overlay that translates Chinese from a screen share. It shares a window through the desktop portal (PipeWire, the same mechanism OBS uses), OCRs a region of the stream you mark once, and shows the hanzi with pinyin, a word-by-word dictionary breakdown, and a translation. Everything runs locally.
 
 ## Features
 
@@ -110,7 +110,7 @@ make run
 ## Project Structure
 
 ```
-Dannazione-di-Provvidenza/
+Meili/
 ├── src/
 │   ├── mesly/              # Python application
 │   │   ├── capture/        # Portal/PipeWire window streaming, screen capture
