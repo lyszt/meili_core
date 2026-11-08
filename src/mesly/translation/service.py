@@ -6,6 +6,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Optional
 
+import torch
+from torch import nn
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 from ..utils import Logger
@@ -14,6 +16,9 @@ DEFAULT_MODEL = "Helsinki-NLP/opus-mt-zh-en"  # dedicated zh->en model
 CACHE_TTL_SECONDS = 10
 # MarianMT's positional encoding limit
 MAX_MODEL_TOKENS = 512
+# Cap on generated tokens: subtitles are short, and an uncapped generate
+# can burn whole seconds on the CPU. Scale with the input, never below 16.
+MAX_NEW_TOKENS = 64
 
 
 class TranslationService:
@@ -42,14 +47,26 @@ class TranslationService:
             # unsupported cards (e.g. compute capability < 7.0) device_map
             # schemes either crash with mixed-device errors or run broken
             # kernels, so the default is plain CPU.
+            using_gpu = False
             if (self.config is not None
                     and getattr(self.config.performance, "use_gpu", False)):
-                import torch
                 if torch.cuda.is_available():
                     Logger.info("Translation: moving model to CUDA")
                     self.model.to("cuda")
+                    using_gpu = True
                 else:
                     Logger.warning("Translation: use_gpu set but CUDA unavailable; staying on CPU")
+
+            if not using_gpu:
+                # Int8 dynamic quantization: roughly 2-3x faster MarianMT
+                # inference on CPU with negligible quality change
+                try:
+                    self.model = torch.quantization.quantize_dynamic(
+                        self.model, {nn.Linear}, dtype=torch.qint8)
+                    Logger.info("Translation: dynamic int8 quantization applied")
+                except Exception as e:
+                    Logger.warning(f"Translation: quantization skipped ({e})")
+
             self.model.eval()
             Logger.info(f"Translation model '{self.model_name}' loaded successfully.")
         except Exception as e:
@@ -95,9 +112,12 @@ class TranslationService:
             return {"translation": f"[Translation model failed to load: {self.load_error}]", "error": self.load_error}
 
         try:
+            t0 = time.perf_counter()
             translation = self._translate_chunks(text)
+            elapsed = time.perf_counter() - t0
             self._cache[cache_key] = {"translation": translation, "timestamp": current_time}
-            Logger.info(f"Translation: '{text[:50]}...' -> '{translation[:50]}...'")
+            Logger.info(f"Translation ({elapsed:.2f}s): "
+                        f"'{text[:50]}...' -> '{translation[:50]}...'")
             return {"translation": translation, "from": from_lang, "to": to_lang}
         except Exception as e:
             Logger.error(f"Translation failed: {e}")
@@ -190,7 +210,10 @@ class TranslationService:
         # Guard against mixed devices (model on GPU, inputs on CPU)
         device = self.model.device
         inputs = {k: v.to(device) for k, v in inputs.items()}
-        output = self.model.generate(**inputs)
+        input_len = inputs["input_ids"].shape[1]
+        output = self.model.generate(
+            **inputs,
+            max_new_tokens=max(16, min(MAX_NEW_TOKENS, 2 * input_len)))
         return self.tokenizer.decode(output[0], skip_special_tokens=True).strip()
 
     def close(self) -> None:

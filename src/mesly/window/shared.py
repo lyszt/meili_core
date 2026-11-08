@@ -2,6 +2,8 @@
 Shared helpers and background workers for the Mesly windows.
 """
 
+import time
+
 from PIL import Image
 from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap
@@ -52,6 +54,7 @@ class TranslationWorker(QThread):
 
     def run(self):
         try:
+            Logger.info(f"Translation starting: '{self.text[:50]}'")
             result = self.translation_service.translate(
                 self.text, from_lang=self.from_lang, to_lang=self.to_lang
             )
@@ -75,7 +78,11 @@ class OcrWorker(QThread):
 
     def run(self):
         try:
+            Logger.info("OCR starting")
+            t0 = time.perf_counter()
             text = self.ocr_service.image_to_text(self.image)
+            Logger.info(f"OCR done in {time.perf_counter() - t0:.2f}s: "
+                        f"'{(text or '')[:40]}'")
             self.ocr_finished.emit(text)
         except Exception as e:
             Logger.error(f"OCR worker failed: {e}")

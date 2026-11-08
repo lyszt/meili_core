@@ -36,6 +36,8 @@ BAR_HEIGHT = 690
 MIN_REGION_SIZE = 24
 # Usable text width inside the study card
 CARD_TEXT_WIDTH = 640
+# Wrap target slightly inside the card so metric drift never reaches the edge
+WRAP_WIDTH = CARD_TEXT_WIDTH - 40
 # Watch poll interval (seconds)
 WATCH_INTERVAL = .5
 
@@ -122,6 +124,22 @@ def wrap_to_width(text, metrics, max_width):
     return "\n".join(lines)
 
 
+def wrap_cjk_to_width(text, metrics, max_width):
+    """Char-wrap hanzi (it has no spaces); only inserts breaks when the
+    text would not fit on one line."""
+    lines = []
+    current = ""
+    for ch in text:
+        if current and metrics.horizontalAdvance(current + ch) > max_width:
+            lines.append(current)
+            current = ch
+        else:
+            current += ch
+    if current:
+        lines.append(current)
+    return "\n".join(lines)
+
+
 class CardGrip(QWidget):
     """Drag pill at the top of the study card."""
 
@@ -162,20 +180,20 @@ class StudyCard(QWidget):
                 border-radius: 3px;
             }
             #hud_hanzi {
-                color: rgba(232, 240, 252, 235);
-                font-size: 15px;
-                font-weight: 500;
+                color: rgba(232, 240, 252, 245);
+                font-size: 24px;
+                font-weight: 600;
                 background: transparent;
             }
             #hud_translation {
                 color: #ffffff;
-                font-size: 18px;
-                font-weight: 600;
+                font-size: 14px;
+                font-weight: 500;
                 background: transparent;
             }
             #hud_pinyin {
                 color: #a8d8ff;
-                font-size: 13px;
+                font-size: 16px;
                 background: transparent;
             }
             #hud_dict {
@@ -399,37 +417,34 @@ class HUDWindow(QWidget):
         grip_row.addStretch(1)
         card_layout.addLayout(grip_row)
 
+        self.pinyin_label = OutlineLabel("")
+        self.pinyin_label.setObjectName("hud_pinyin")
+        self.pinyin_label.setAlignment(Qt.AlignHCenter)
+        card_layout.addWidget(self.pinyin_label)
+
         self.hanzi_label = HanziLabel(self)
         self.hanzi_label.setObjectName("hud_hanzi")
-        self.hanzi_label.setWordWrap(True)
         self.hanzi_label.setAlignment(Qt.AlignHCenter)
         self.hanzi_label.setText("框选字幕区")
         card_layout.addWidget(self.hanzi_label)
 
         self.translation_label = OutlineLabel("")
         self.translation_label.setObjectName("hud_translation")
-        self.translation_label.setWordWrap(True)
         self.translation_label.setAlignment(Qt.AlignHCenter)
         card_layout.addWidget(self.translation_label)
 
-        self.pinyin_label = OutlineLabel("")
-        self.pinyin_label.setObjectName("hud_pinyin")
-        self.pinyin_label.setWordWrap(True)
-        self.pinyin_label.setAlignment(Qt.AlignHCenter)
-        card_layout.addWidget(self.pinyin_label)
-
         self.dict_label = OutlineLabel("")
         self.dict_label.setObjectName("hud_dict")
-        self.dict_label.setWordWrap(True)
         self.dict_label.setAlignment(Qt.AlignHCenter)
         card_layout.addWidget(self.dict_label)
 
-        # Hard width cap: nothing can force the card wider than this, so
-        # the card window never grows to cover clicks meant for the
-        # overlay (e.g. region selection)
+        # Fixed text width with manual wrapping: labels can never push the
+        # card wider, and size hints stay exact (wordWrap hints size the
+        # card badly)
         for label in (self.hanzi_label, self.pinyin_label,
                       self.dict_label, self.translation_label):
-            label.setMaximumWidth(CARD_TEXT_WIDTH)
+            label.setFixedWidth(CARD_TEXT_WIDTH)
+            label.setWordWrap(False)
 
         layout.addStretch(1)
         layout.addLayout(bottom_row)
@@ -441,6 +456,7 @@ class HUDWindow(QWidget):
         self._rubber_band = QRubberBand(QRubberBand.Rectangle, self)
         self._rubber_origin = None
         self._region_ocr_worker = None
+        self._last_watch_region = None
 
         self._watch_timer = QTimer(self)
         self._watch_timer.timeout.connect(self._watch_tick)
@@ -544,11 +560,18 @@ class HUDWindow(QWidget):
         self.hanzi_label.setText("Stream stopped")
         self.status_label.setText(message)
 
-    def _display_hanzi(self, hanzi: str):
+    def _display_hanzi(self, hanzi: str, dictionary: bool = True):
         """Show the study layer: hanzi, pinyin, dictionary breakdown."""
-        self.hanzi_label.setText(hanzi)
-        self.pinyin_label.setText(char_pinyin(hanzi))
-        entries = self.cedict.breakdown(hanzi)
+        hanzi_fm = self.hanzi_label.fontMetrics()
+        self.hanzi_label.setText(
+            wrap_cjk_to_width(hanzi, hanzi_fm, WRAP_WIDTH))
+        self.pinyin_label.setText(
+            wrap_to_width(char_pinyin(hanzi),
+                          self.pinyin_label.fontMetrics(), WRAP_WIDTH))
+        # The dictionary line is omitted during subtitle watching: hover
+        # on any character gives its meaning, and the breakdown clutters
+        # a line you are reading in passing
+        entries = self.cedict.breakdown(hanzi) if dictionary else []
         self.dict_label.setText(wrap_dictionary(entries))
         self._sync_card()
 
@@ -561,7 +584,8 @@ class HUDWindow(QWidget):
         self.translation_worker.error.connect(self._on_translation_error)
         self.translation_worker.start()
 
-    def show_ocr_text(self, ocr_text, image=None, translate=True):
+    def show_ocr_text(self, ocr_text, image=None, translate=True,
+                      dictionary=True):
         """
         Entry point for the hotkey capture: display captured Chinese and
         translate. Manual, user-initiated - never automatic.
@@ -576,7 +600,7 @@ class HUDWindow(QWidget):
             return
 
         self.last_hanzi = hanzi
-        self._display_hanzi(hanzi)
+        self._display_hanzi(hanzi, dictionary=dictionary)
         if translate:
             self._start_translation(hanzi)
 
@@ -622,7 +646,7 @@ class HUDWindow(QWidget):
         self.translation_label.setText(
             wrap_to_width(translation,
                           self.translation_label.fontMetrics(),
-                          CARD_TEXT_WIDTH))
+                          WRAP_WIDTH))
         self.status_label.setText("Translated")
         self._sync_card()
 
@@ -630,7 +654,7 @@ class HUDWindow(QWidget):
         self.translation_label.setText(
             wrap_to_width(f"(translation failed: {message})",
                           self.translation_label.fontMetrics(),
-                          CARD_TEXT_WIDTH))
+                          WRAP_WIDTH))
         self.status_label.setText("Translation error")
         self._sync_card()
 
@@ -777,12 +801,14 @@ class HUDWindow(QWidget):
 
         self.status_label.setText("Watching the box - new Chinese inside translates automatically (right-click clears)")
         Logger.info(f"HUD: watch region {rect} -> stream {self.watch_stream_rect}")
+        self._last_watch_region = None
         self._watch_timer.start(int(WATCH_INTERVAL * 1000))
         self._watch_tick()
 
     def _clear_watch_region(self):
         self.watch_stream_rect = None
         self.watch_region = None
+        self._last_watch_region = None
         self._watch_mark.hide()
         self._watch_timer.stop()
         self.status_label.setText("Watch cleared")
@@ -824,7 +850,20 @@ class HUDWindow(QWidget):
         y0 = max(0, min(rect.y(), gray.shape[0] - 1))
         x1 = max(x0 + 1, min(rect.x() + rect.width(), gray.shape[1]))
         y1 = max(y0 + 1, min(rect.y() + rect.height(), gray.shape[0]))
-        crop = Image.fromarray(np.ascontiguousarray(gray[y0:y1, x0:x1]))
+        region = gray[y0:y1, x0:x1]
+
+        # Subtitles are static between cuts: skip the whole OCR pass when
+        # the region pixels did not change since the last pass
+        if self._last_watch_region is not None and np.array_equal(
+                region, self._last_watch_region):
+            return
+        self._last_watch_region = region
+        crop = Image.fromarray(np.ascontiguousarray(region))
+        # Small subtitle strips read much better at 2x: upscale before
+        # handing to tesseract instead of feeding compressed pixel mush
+        if crop.height < 96:
+            crop = crop.resize((crop.width * 2, crop.height * 2),
+                               Image.LANCZOS)
 
         self.status_label.setText("Reading region…")
         self._region_ocr_worker = OcrWorker(self.ocr_service, crop)
@@ -845,4 +884,7 @@ class HUDWindow(QWidget):
             self.status_label.setText("Unchanged")
             return
 
-        self.show_ocr_text(hanzi)
+        # Watching a subtitle line: card stays lean (hover has the
+        # character-level dictionary)
+        dictionary = self.watch_stream_rect is None
+        self.show_ocr_text(hanzi, dictionary=dictionary)

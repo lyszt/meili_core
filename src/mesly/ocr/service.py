@@ -6,6 +6,7 @@ then runs Tesseract on captured images.
 import os
 
 import pytesseract
+from pytesseract import Output
 from pathlib import Path
 from PIL import Image
 
@@ -13,6 +14,9 @@ from ..config import ConfigTemplate
 from ..utils import Logger
 
 ROOT = Path(__file__).resolve().parents[3]
+
+# Words below this confidence are OCR noise and never reach translation
+MIN_WORD_CONFIDENCE = 55.0
 
 # config language codes -> Tesseract language codes
 LANG_ALIASES = {
@@ -95,7 +99,22 @@ class OcrService:
         if self._tessdata_dir:
             try:
                 grayscale = image if image.mode == "L" else image.convert("L")
-                return pytesseract.image_to_string(grayscale, lang=self.lang).strip()
+                data = pytesseract.image_to_data(
+                    grayscale, lang=self.lang, output_type=Output.DICT)
+                # Keep only confident words: misreads never improve a
+                # translation, they turn into garbage on the card
+                words = []
+                for text, conf in zip(data["text"], data["conf"]):
+                    text = text.strip()
+                    if not text:
+                        continue
+                    try:
+                        confidence = float(conf)
+                    except (TypeError, ValueError):
+                        confidence = -1.0
+                    if confidence >= MIN_WORD_CONFIDENCE:
+                        words.append(text)
+                return " ".join(words)
             except Exception as e:
                 Logger.error(f"OCR failed with langs '{self.lang}': {e}")
 
