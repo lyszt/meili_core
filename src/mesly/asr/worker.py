@@ -12,7 +12,13 @@ from ..utils import Logger
 from .capture import MonitorCapture, SAMPLE_RATE
 from .recognize import AsrService
 
-# Energy gate below which audio counts as silence
+try:
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+    _VAD_OPTIONS = VadOptions(min_silence_duration_ms=700, speech_pad_ms=100)
+except Exception:
+    _VAD_OPTIONS = None
+
+# Fallback energy gate when Silero VAD is unavailable
 RMS_GATE = 0.01
 # Silence that closes an utterance (seconds)
 SILENCE_CLOSE = 0.9
@@ -47,12 +53,20 @@ class AsrWorker(QThread):
         self.capture.read_loop()
         self.capture.stop()
 
+    @staticmethod
+    def _chunk_is_speech(chunk: np.ndarray) -> bool:
+        """Music and effects are not speech: Silero VAD decides, with an
+        energy fallback if the model is unavailable."""
+        if _VAD_OPTIONS is not None:
+            try:
+                return bool(get_speech_timestamps(chunk, _VAD_OPTIONS))
+            except Exception:
+                pass
+        return float(np.sqrt(np.mean(chunk * chunk))) >= RMS_GATE
+
     def _on_chunk(self, chunk: np.ndarray):
-        """Energy-based utterance segmentation; runs on the worker
-        thread (parec blocks in read_loop, so nothing queues behind
-        this while we transcribe)."""
-        rms = float(np.sqrt(np.mean(chunk * chunk)))
-        if rms >= RMS_GATE:
+        """Utterance segmentation driven by speech detection."""
+        if self._chunk_is_speech(chunk):
             self._speech += len(chunk) / SAMPLE_RATE
             self._silence = 0.0
         else:
@@ -78,6 +92,12 @@ class AsrWorker(QThread):
         self._silence = 0.0
 
     def stop(self):
+        """Patient stop: a transcription in flight can outlive a short
+        timeout, and destroying a running QThread kills the process."""
         if self.capture is not None:
             self.capture.stop()
-        self.wait(5000)
+        for _ in range(40):
+            if not self.isRunning():
+                return
+            self.wait(500)
+        Logger.warning("ASR: worker did not finish in time")
