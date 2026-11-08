@@ -144,6 +144,48 @@ class ScreenCapture:
         Logger.error("All screenshot tools failed")
         return None
 
+    def capture_region(self, box) -> Optional[np.ndarray]:
+        """
+        Captures an arbitrary screen region (absolute screen coordinates).
+
+        Args:
+            box: (left, top, width, height)
+
+        Returns:
+            RGB numpy array, or None on failure
+        """
+        left, top, width, height = box
+        if width <= 0 or height <= 0:
+            return None
+
+        if self.sct:
+            try:
+                region = {"left": left, "top": top, "width": width, "height": height}
+                sct_img = self.sct.grab(region)
+                img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
+                return np.array(img)
+            except Exception as e:
+                Logger.debug(f"MSS region capture failed: {e}")
+
+        if HAS_PYAUTOGUI:
+            try:
+                screenshot = pyautogui.screenshot(region=(left, top, width, height))
+                return np.array(screenshot)
+            except Exception as e:
+                Logger.debug(f"PyAutoGUI region capture failed: {e}")
+
+        return None
+
+    def get_primary_monitor_box(self) -> Optional[tuple]:
+        """Bounding box (left, top, width, height) of the primary monitor, if known."""
+        if self.sct:
+            try:
+                monitor = self.sct.monitors[1]
+                return (monitor["left"], monitor["top"], monitor["width"], monitor["height"])
+            except Exception as e:
+                Logger.debug(f"Failed to read monitor info: {e}")
+        return None
+
     def capture_and_save(self, filepath: str) -> bool:
         """Capture fullscreen and save to file"""
         img_array = self.capture_screen()

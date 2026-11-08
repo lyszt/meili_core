@@ -2,16 +2,17 @@
 Application entry point: hotkeys, capture, OCR, translation, TTS, server.
 """
 
+import signal
 import sys
 from datetime import datetime
 from pathlib import Path
 
-import pytesseract
 from PIL import Image
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import QObject, pyqtSignal, QTimer
+from PyQt5.QtCore import QObject, QTimer, pyqtSignal
 
 from .config import ConfigTemplate, SystemSpecs
+from .ocr import OcrService
 from .translation import TranslationService
 from .tts import SpeechSynthesizer
 from .server.server import Server
@@ -48,11 +49,25 @@ class MeslyApp:
         app.setApplicationName("Mesly")
         app.setStyle("Fusion")
 
-        # Local services: translation (MarianMT) and speech (NeuTTS/gTTS)
+        # Ctrl+C / SIGTERM should quit the app gracefully. The default Python
+        # SIGINT handler can never run while Qt's C++ event loop owns the
+        # thread, so an unhandled KeyboardInterrupt stays pending and fires
+        # at interpreter shutdown (ugly traceback, abort exit code).
+        signal.signal(signal.SIGINT, self._handle_quit_signal)
+        signal.signal(signal.SIGTERM, self._handle_quit_signal)
+
+        # Yield to Python periodically so the signal handlers get a chance
+        # to actually run while the Qt event loop is active.
+        self._signal_timer = QTimer()
+        self._signal_timer.timeout.connect(lambda: None)
+        self._signal_timer.start(200)
+
+        # Local services: OCR, translation (MarianMT) and speech (NeuTTS/gTTS)
+        self.ocr_service = OcrService(self.config)
         self.translation_service = TranslationService()
         self.speech = SpeechSynthesizer(self.config, specs=self.specs)
 
-        self.window = MainWindow(self.translation_service, self.speech)
+        self.window = MainWindow(self.translation_service, self.speech, self.ocr_service)
         self.window.show()
 
         # Start hotkey listeners
@@ -72,6 +87,11 @@ class MeslyApp:
         app.aboutToQuit.connect(self._cleanup)
 
         sys.exit(app.exec())
+
+    def _handle_quit_signal(self, signum, frame):
+        """Quit the Qt event loop so cleanup runs and the app exits cleanly."""
+        Logger.info(f"Signal {signum} received, shutting down...")
+        QApplication.quit()
 
     def _cleanup(self):
         """Cleanup resources before application exit."""
@@ -146,7 +166,7 @@ class MeslyApp:
         try:
             Logger.info("Performing OCR on screenshot...")
             with Image.open(filepath) as img:
-                ocr_text = pytesseract.image_to_string(img).strip()
+                ocr_text = self.ocr_service.image_to_text(img)
 
             if ocr_text:
                 Logger.info(f"OCR extracted {len(ocr_text)} characters")

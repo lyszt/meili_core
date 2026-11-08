@@ -64,7 +64,9 @@ pacman)
   $INSTALL_CMD python python-pip tk \
     gnome-screenshot scrot \
     qt5-base \
-    tesseract tesseract-data-eng tesseract-data-jpn ||
+    wmctrl xdotool \
+    python-gobject gstreamer gst-plugins-base gst-plugin-pipewire xdg-desktop-portal \
+    tesseract tesseract-data-eng tesseract-data-chi_sim tesseract-data-jpn ||
     echo -e "${YELLOW}Some packages may already be installed${NC}"
   ;;
 
@@ -73,7 +75,9 @@ apt)
   $INSTALL_CMD python3 python3-pip python3-tk \
     gnome-screenshot scrot \
     python3-pyqt5 \
-    tesseract-ocr tesseract-ocr-eng tesseract-ocr-jpn \
+    wmctrl xdotool \
+    python3-gi gir1.2-gst-plugins-base-1.0 gstreamer1.0-plugins-base gstreamer1.0-pipewire xdg-desktop-portal \
+    tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim tesseract-ocr-jpn \
     python3-dev build-essential ||
     echo -e "${YELLOW}Some packages may already be installed${NC}"
   ;;
@@ -83,7 +87,9 @@ dnf)
   $INSTALL_CMD python3 python3-pip python3-tkinter \
     gnome-screenshot scrot \
     python3-qt5 \
-    tesseract tesseract-langpack-eng tesseract-langpack-jpn \
+    wmctrl xdotool \
+    python3-gobject gstreamer1-plugins-base gstreamer1-pipewire xdg-desktop-portal \
+    tesseract tesseract-langpack-eng tesseract-langpack-chi-sim tesseract-langpack-jpn \
     python3-devel gcc ||
     echo -e "${YELLOW}Some packages may already be installed${NC}"
   ;;
@@ -93,7 +99,9 @@ zypper)
   $INSTALL_CMD python3 python3-pip python3-tk \
     gnome-screenshot scrot \
     python3-qt5 \
-    tesseract-ocr tesseract-ocr-traineddata-english tesseract-ocr-traineddata-japanese \
+    wmctrl xdotool \
+    python3-gobject gstreamer-plugins-base pipewire-gstreamer-plugin xdg-desktop-portal \
+    tesseract-ocr tesseract-ocr-traineddata-english tesseract-ocr-traineddata-chinese_sim tesseract-ocr-traineddata-japanese \
     python3-devel gcc ||
     echo -e "${YELLOW}Some packages may already be installed${NC}"
   ;;

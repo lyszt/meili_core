@@ -2,7 +2,9 @@
 pytesseract
 
 # Translation (local Helsinki-NLP / MarianMT)
-transformers
+# transformers v5 removed the "translation" pipeline task and MarianMT support
+# is only guaranteed on 4.x, so pin below 5.
+transformers<5
 sentencepiece
 sacremoses
 accelerate
@@ -36,6 +38,10 @@ scipy
 # HTML parsing (page context in the server)
 beautifulsoup4
 lxml
+
+# Wayland live capture (xdg-desktop-portal ScreenCast + PipeWire via GStreamer)
+# Requires system packages: python-gobject, gst-plugins-base, gst-plugin-pipewire
+PyGObject
 
 # Configuration & Utilities
 pyyaml

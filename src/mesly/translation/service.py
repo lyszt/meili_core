@@ -6,12 +6,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Optional
 
-from transformers import pipeline
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 from ..utils import Logger
 
 DEFAULT_MODEL = "Helsinki-NLP/opus-mt-mul-en"
 CACHE_TTL_SECONDS = 10
+# MarianMT's positional encoding limit
+MAX_MODEL_TOKENS = 512
 
 
 class TranslationService:
@@ -19,7 +21,8 @@ class TranslationService:
 
     def __init__(self, model_name: str = DEFAULT_MODEL):
         self.model_name = model_name
-        self.pipeline = None
+        self.tokenizer = None
+        self.model = None
         self.loading = True
         self.load_error: Optional[str] = None
         self._cache: Dict[str, Dict] = {}
@@ -29,7 +32,15 @@ class TranslationService:
     def _load_model(self) -> None:
         try:
             Logger.info(f"Loading translation model '{self.model_name}'...")
-            self.pipeline = pipeline("translation", model=self.model_name, device_map="auto")
+            # transformers >= 5 removed the "translation" pipeline task, so
+            # load the MarianMT tokenizer/model directly (works on v4 and v5).
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            try:
+                self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name, device_map="auto")
+            except Exception:
+                # No accelerate / no usable GPU: plain CPU load
+                self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name)
+            self.model.eval()
             Logger.info(f"Translation model '{self.model_name}' loaded successfully.")
         except Exception as e:
             self.load_error = str(e)
@@ -38,7 +49,7 @@ class TranslationService:
             self.loading = False
 
     def is_ready(self) -> bool:
-        return not self.loading and self.pipeline is not None
+        return not self.loading and self.model is not None
 
     def translate(self, text: str, from_lang: str = "auto", to_lang: str = "en") -> Dict[str, str]:
         """
@@ -74,15 +85,96 @@ class TranslationService:
             return {"translation": f"[Translation model failed to load: {self.load_error}]", "error": self.load_error}
 
         try:
-            result = self.pipeline(text)
-            translation = result[0]['translation_text']
-
+            translation = self._translate_chunks(text)
             self._cache[cache_key] = {"translation": translation, "timestamp": current_time}
             Logger.info(f"Translation: '{text[:50]}...' -> '{translation[:50]}...'")
             return {"translation": translation, "from": from_lang, "to": to_lang}
         except Exception as e:
             Logger.error(f"Translation failed: {e}")
             return {"translation": f"[Translation error: {e}]", "error": str(e)}
+
+    def _translate_chunks(self, text: str) -> str:
+        """
+        Translate text longer than the model's token limit by splitting on
+        line/sentence boundaries first, then hard-splitting any remaining
+        over-long chunk.
+        """
+        tokens = self.tokenizer.encode(text, add_special_tokens=False)
+        if len(tokens) <= MAX_MODEL_TOKENS:
+            return self._generate(text)
+
+        chunks = self._split_chunks(text)
+        return " ".join(self._generate(chunk) for chunk in chunks)
+
+    def _split_chunks(self, text: str) -> list:
+        """Split text into chunks that each fit inside the model's token limit."""
+        # Prefer natural boundaries: paragraphs, then lines, then sentences
+        pieces = []
+        for para in text.split("\n"):
+            if not para.strip():
+                continue
+            if len(self.tokenizer.encode(para, add_special_tokens=False)) <= MAX_MODEL_TOKENS:
+                pieces.append(para)
+                continue
+            for part in self._split_hard(para):
+                pieces.append(part)
+
+        chunks = []
+        current = ""
+        for piece in pieces:
+            candidate = f"{current} {piece}".strip() if current else piece
+            if len(self.tokenizer.encode(candidate, add_special_tokens=False)) <= MAX_MODEL_TOKENS:
+                current = candidate
+            else:
+                if current:
+                    chunks.append(current)
+                current = piece
+        if current:
+            chunks.append(current)
+        return chunks
+
+    def _split_hard(self, text: str) -> list:
+        """Sentence-first split; falls back to token-window split for monsters."""
+        sentences = [s for s in text.replace("。", ".\n").replace("！", "!\n").replace("？", "?\n").split(".") if s.strip()]
+        pieces = []
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            pieces.append(sentence)
+
+        result = []
+        current = ""
+        for piece in pieces:
+            candidate = f"{current}. {piece}".strip() if current else piece
+            if len(self.tokenizer.encode(candidate, add_special_tokens=False)) <= MAX_MODEL_TOKENS:
+                current = candidate
+            else:
+                if current:
+                    result.append(current)
+                # A single sentence over the limit gets hard-split by tokens
+                if len(self.tokenizer.encode(piece, add_special_tokens=False)) > MAX_MODEL_TOKENS:
+                    result.extend(self._split_tokens(piece))
+                    current = ""
+                else:
+                    current = piece
+        if current:
+            result.append(current)
+        return result
+
+    def _split_tokens(self, text: str) -> list:
+        """Split an over-long sentence into chunks of at most MAX_MODEL_TOKENS."""
+        ids = self.tokenizer.encode(text, add_special_tokens=False)
+        chunks = []
+        for i in range(0, len(ids), MAX_MODEL_TOKENS):
+            chunk_ids = ids[i:i + MAX_MODEL_TOKENS]
+            chunks.append(self.tokenizer.decode(chunk_ids, skip_special_tokens=True))
+        return chunks
+
+    def _generate(self, text: str) -> str:
+        inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=MAX_MODEL_TOKENS)
+        output = self.model.generate(**inputs)
+        return self.tokenizer.decode(output[0], skip_special_tokens=True).strip()
 
     def close(self) -> None:
         self._executor.shutdown(wait=True)

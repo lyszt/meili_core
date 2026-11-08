@@ -24,16 +24,18 @@
 * **Engine:** local **Helsinki-NLP (MarianMT)** — no API keys, no cloud calls.
 * **Privacy:** fully offline capable. Your reading habits never leave your machine.
 
-### 2. Live capture
-* Optional 5-second fullscreen capture that re-OCRs the screen and auto-translates while you play or read.
+### 2. Live window share
+* OBS-style source picker: choose an open window, the entire screen, or use the system picker dialog.
+* On Wayland (and anywhere the desktop portal is available), "Pick window/screen" opens the native portal dialog and streams real frames over PipeWire — same mechanism OBS uses.
+* Live preview; the capture follows the window when it moves or resizes; auto OCR + translate on an interval (or on demand), shown right in the live window.
+* Requires PyGObject + GStreamer + the PipeWire GStreamer plugin for the portal path; `wmctrl`/`xdotool` for the X11 window list.
 
 ### 3. Text-to-Speech
 * **NeuTTS** (local neural TTS, optional — enabled in config).
 * **gTTS** fallback.
 * Speak either the captured text or its translation, useful for pronunciation.
 
-### 4. Browser Extension (Chromium)
-* Select text on any page and get an in-page translation tooltip.
+### 4. Browser Extension (Chromium)* Select text on any page and get an in-page translation tooltip.
 * Talks to the local backend on `127.0.0.1:8263`.
 * Page context is kept **in memory only** — nothing is written to disk.
 
@@ -43,13 +45,14 @@
 * Python 3.12+
 * Node.js (latest LTS)
 * Tesseract OCR with the language packs you want (e.g. `chi_sim` for Mandarin)
+* `wmctrl` and `xdotool` for the live window share's window picker (X11)
 * Chromium-based browser (for the extension)
 
 ### Setup
 
 ```bash
 # System dependencies (Arch Linux)
-./scripts/install_deps.sh
+./scripts/install_dependencies.sh
 
 # Python dependencies
 make install-pip
@@ -110,12 +113,12 @@ make run
 Dannazione-di-Provvidenza/
 ├── src/
 │   ├── mesly/              # Python application
-│   │   ├── capture/         # Screen capture (hotkey + live stream)
+│   │   ├── capture/         # Screen capture (hotkey, live stream, window share)
 │   │   ├── config/          # Settings and system specs
 │   │   ├── server/          # FastAPI backend (translation, page context)
 │   │   ├── translation/     # Local MarianMT translation service
 │   │   ├── tts/             # NeuTTS / gTTS speech synthesis
-│   │   └── window/          # PyQt5 GUI
+│   │   └── window/          # PyQt5 GUI (main + live share)
 │   └── extension/           # Chromium extension (select-to-translate)
 ├── config/                  # Runtime config
 ├── vendor/                  # NeuTTS (optional)

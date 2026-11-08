@@ -1,10 +1,10 @@
 import time
 import numpy as np
-import pytesseract
 from PyQt5.QtCore import QThread, pyqtSignal
 from PIL import Image
 
 from .screen_capture import ScreenCapture
+from ..ocr import OcrService
 from ..utils import Logger
 
 
@@ -16,11 +16,12 @@ class ScreenShareThread(QThread):
     # Signal: (Image Object, Extracted Text String)
     content_update = pyqtSignal(object, str)
 
-    def __init__(self, interval=5.0):
+    def __init__(self, ocr_service: OcrService, interval=5.0):
         super().__init__()
         self.interval = interval  # Configurable delay between captures
         self.running = True
         self.capture_tool = ScreenCapture()
+        self.ocr_service = ocr_service
         self.last_frame = None
 
     def run(self):
@@ -40,7 +41,7 @@ class ScreenShareThread(QThread):
 
                     try:
                         # Tesseract reads the text from the RAM image
-                        text_content = pytesseract.image_to_string(img).strip()
+                        text_content = self.ocr_service.image_to_text(img)
                         Logger.debug(f"OCR extracted {len(text_content)} chars")
                     except Exception as e:
                         Logger.error(f"OCR Failed: {e}")

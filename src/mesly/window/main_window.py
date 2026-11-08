@@ -4,62 +4,40 @@ Main application window: fullscreen capture preview, OCR text, translation, TTS.
 
 import os
 import tempfile
-from PIL import Image
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
                              QPushButton, QLabel, QTextEdit, QCheckBox)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent, QUrl
+from PyQt5.QtCore import Qt, QUrl, pyqtSignal
+from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 
 from ..capture.stream_thread import ScreenShareThread
+from ..ocr import OcrService
 from ..translation import TranslationService
 from ..tts import SpeechSynthesizer
 from ..utils import Logger
-
-
-class TranslationWorker(QThread):
-    """Runs translation in a background thread without blocking the GUI."""
-    finished = pyqtSignal(dict)
-    error = pyqtSignal(str)
-
-    def __init__(self, translation_service: TranslationService, text: str,
-                 from_lang: str = "auto", to_lang: str = "en"):
-        super().__init__()
-        self.translation_service = translation_service
-        self.text = text
-        self.from_lang = from_lang
-        self.to_lang = to_lang
-
-    def run(self):
-        try:
-            result = self.translation_service.translate(
-                self.text, from_lang=self.from_lang, to_lang=self.to_lang
-            )
-            if "error" in result:
-                self.error.emit(result.get("translation", result["error"]))
-            else:
-                self.finished.emit(result)
-        except Exception as e:
-            Logger.error(f"Translation worker failed: {e}")
-            self.error.emit(str(e))
+from .live_view import LiveViewWindow
+from .shared import TranslationWorker, capped_window_size, pil2pixmap
 
 
 class MainWindow(QMainWindow):
     # Emitted from non-GUI threads to play audio safely on the main thread
     play_audio_signal = pyqtSignal(str)
 
-    def __init__(self, translation_service: TranslationService, speech: SpeechSynthesizer):
+    def __init__(self, translation_service: TranslationService, speech: SpeechSynthesizer,
+                 ocr_service: OcrService):
         super().__init__()
         self.play_audio_signal.connect(self._play_audio_file)
 
         self.setWindowTitle("Mesly - OCR Translate")
-        self.resize(520, 800)
+        width, height = capped_window_size(520, 800, 0.45, 0.75)
+        self.resize(width, height)
 
         # Tools
         self.translation_service = translation_service
         self.speech = speech
+        self.ocr_service = ocr_service
         self.stream_thread = None
         self.translation_worker = None
+        self.live_view = None
         self.audio_player = QMediaPlayer()
         self.audio_player.error.connect(self._on_audio_error)
 
@@ -81,13 +59,19 @@ class MainWindow(QMainWindow):
         self.btn_toggle_share.setStyleSheet("padding: 10px; font-size: 14px;")
         layout.addWidget(self.btn_toggle_share)
 
+        # Live Window Share Button (OBS-style picker)
+        self.btn_live_share = QPushButton("Open Live Window Share")
+        self.btn_live_share.clicked.connect(self.open_live_view)
+        self.btn_live_share.setStyleSheet("padding: 8px; font-size: 12px;")
+        layout.addWidget(self.btn_live_share)
+
         # Preview Area
         self.lbl_preview = QLabel("Screen Preview")
         self.lbl_preview.setAlignment(Qt.AlignCenter)
         self.lbl_preview.setStyleSheet("border: 2px dashed #555; background: #222; color: #888;")
-        self.lbl_preview.setMinimumSize(400, 220)
-        self.lbl_preview.setScaledContents(True)
-        layout.addWidget(self.lbl_preview)
+        self.lbl_preview.setMinimumSize(320, 180)
+        layout.addWidget(self.lbl_preview, 2)
+        self._last_preview_image = None
 
         # Status Label
         self.lbl_status = QLabel("Press Ctrl+Alt+S to capture and translate, or start live capture.")
@@ -145,7 +129,7 @@ class MainWindow(QMainWindow):
     def toggle_sharing(self, checked):
         """Toggle periodic fullscreen capture (live OCR preview)."""
         if checked:
-            self.stream_thread = ScreenShareThread(interval=5.0)  # 5 second delay between captures
+            self.stream_thread = ScreenShareThread(self.ocr_service, interval=5.0)  # 5 second delay between captures
             self.stream_thread.content_update.connect(self.handle_frame)
             self.stream_thread.start()
 
@@ -161,21 +145,31 @@ class MainWindow(QMainWindow):
             self.lbl_status.setText("Stopped")
             Logger.info("Stopped fullscreen capture")
 
-    def pil2pixmap(self, image):
-        """Converts a PIL Image into a QPixmap for Qt display."""
-        if image.mode == "RGB":
-            r, g, b = image.split()
-            image = Image.merge("RGB", (b, g, r))
+    def open_live_view(self):
+        """Open the OBS-style live window share."""
+        if self.live_view is not None and self.live_view.isVisible():
+            self.live_view.raise_()
+            return
 
-        im2 = image.convert("RGBA")
-        data = im2.tobytes("raw", "BGRA")
-        qim = QImage(data, image.size[0], image.size[1], QImage.Format_ARGB32)
-        pixmap = QPixmap.fromImage(qim)
-        return pixmap
+        self.live_view = LiveViewWindow(self.translation_service, self.ocr_service)
+        self.live_view.show()
+        Logger.info("Live window share opened")
+
+    def pil2pixmap_scaled(self, image):
+        """Converts a PIL Image into a scaled QPixmap that fits the preview."""
+        return pil2pixmap(image).scaled(self.lbl_preview.width(), self.lbl_preview.height(),
+                                         Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+    def resizeEvent(self, event):
+        """Re-render the preview at the new size when the window is resized."""
+        super().resizeEvent(event)
+        if self._last_preview_image is not None:
+            self.lbl_preview.setPixmap(self.pil2pixmap_scaled(self._last_preview_image))
 
     def handle_frame(self, pil_image, extracted_text):
         """Receives the captured image and OCR text from the live capture stream."""
-        pixmap = self.pil2pixmap(pil_image)
+        self._last_preview_image = pil_image
+        pixmap = self.pil2pixmap_scaled(pil_image)
         self.lbl_preview.setPixmap(pixmap)
 
         if extracted_text:
