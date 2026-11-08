@@ -53,3 +53,6 @@ pytest
 
 # Linting
 flake8
+
+# Speech recognition (desktop audio -> Mandarin text)
+faster-whisper

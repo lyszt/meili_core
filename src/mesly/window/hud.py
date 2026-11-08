@@ -23,6 +23,7 @@ from PIL import Image
 
 from ..capture import PortalCapture, portal_available
 from ..dictionary import CEDict, char_pinyin
+from ..asr import AsrWorker
 from ..ocr import OcrService, cjk_only
 from ..translation import TranslationService
 from ..tts import SpeechSynthesizer
@@ -387,12 +388,16 @@ class HUDWindow(QWidget):
         self.status_label = QLabel("Pick the window to share, then drag on the overlay to mark the subtitles")
         self.status_label.setObjectName("hud_status")
         header_row.addWidget(self.status_label, 1)
-        self.btn_speak_hanzi = QPushButton("音")
+        self.btn_speak_hanzi = QPushButton("Say")
         self.btn_speak_hanzi.setToolTip("Speak the captured Chinese")
         self.btn_speak_hanzi.clicked.connect(lambda: self.speak_text("hanzi"))
         self.btn_speak_translation = QPushButton("EN")
         self.btn_speak_translation.setToolTip("Speak the translation")
         self.btn_speak_translation.clicked.connect(lambda: self.speak_text("translation"))
+        self.btn_listen = QPushButton("Listen")
+        self.btn_listen.setCheckable(True)
+        self.btn_listen.setToolTip("Listen to the desktop audio and read the speech")
+        self.btn_listen.toggled.connect(self._toggle_listening)
         self.btn_stop = QPushButton("Stop")
         self.btn_stop.clicked.connect(self.stop_stream)
         self.btn_max = QPushButton("□")
@@ -403,7 +408,8 @@ class HUDWindow(QWidget):
         self.btn_quit.setToolTip("Quit")
         self.btn_quit.clicked.connect(self._quit)
         for button in (self.btn_speak_hanzi, self.btn_speak_translation,
-                       self.btn_stop, self.btn_max, self.btn_quit):
+                       self.btn_listen, self.btn_stop, self.btn_max,
+                       self.btn_quit):
             header_row.addWidget(button)
         layout.addWidget(header)
         self.header = header
@@ -437,7 +443,7 @@ class HUDWindow(QWidget):
         self.hanzi_label = HanziLabel(self)
         self.hanzi_label.setObjectName("hud_hanzi")
         self.hanzi_label.setAlignment(Qt.AlignHCenter)
-        self.hanzi_label.setText("框选字幕区")
+        self.hanzi_label.setText("Drag a box over the subtitles")
         card_layout.addWidget(self.hanzi_label)
 
         self.translation_label = OutlineLabel("")
@@ -481,6 +487,7 @@ class HUDWindow(QWidget):
         self._region_ocr_worker = None
         self._last_watch_region = None
         self._last_watch_ok = False
+        self._asr_worker = None
 
         self._watch_timer = QTimer(self)
         self._watch_timer.timeout.connect(self._watch_tick)
@@ -559,6 +566,9 @@ class HUDWindow(QWidget):
         """Stop every thread before exit: a QThread destroyed while
         running aborts the whole process."""
         self._watch_timer.stop()
+        if self._asr_worker is not None:
+            self._asr_worker.stop()
+            self._asr_worker = None
         if self._region_ocr_worker is not None and self._region_ocr_worker.isRunning():
             self._region_ocr_worker.wait(5000)
         if self.translation_worker is not None and self.translation_worker.isRunning():
@@ -692,6 +702,28 @@ class HUDWindow(QWidget):
     # ------------------------------------------------------------------
     # Speech
     # ------------------------------------------------------------------
+
+    def _toggle_listening(self, on: bool):
+        if on:
+            if self._asr_worker is not None:
+                return
+            self._asr_worker = AsrWorker(self)
+            self._asr_worker.utterance.connect(self._on_utterance)
+            self._asr_worker.status.connect(self._on_stream_status)
+            self._asr_worker.start()
+        else:
+            if self._asr_worker is not None:
+                self._asr_worker.stop()
+                self._asr_worker = None
+            self.status_label.setText("Listening off")
+
+    def _on_utterance(self, text):
+        hanzi = cjk_only(text)
+        if not hanzi:
+            return
+        self.last_hanzi = hanzi
+        self._display_hanzi(hanzi, dictionary=True)
+        self.status_label.setText("Heard")
 
     def speak_text(self, which):
         text = self.last_hanzi if which == "hanzi" else self.last_translation
