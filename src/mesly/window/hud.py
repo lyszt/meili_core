@@ -854,25 +854,41 @@ class HUDWindow(QWidget):
             self.status_label.setText("playerctl not found")
             return
         try:
+            before = subprocess.run(
+                ["playerctl", "status"],
+                capture_output=True, text=True, timeout=2)
+            before_state = (before.stdout or "").strip().lower()
+
+            if "playing" in before_state:
+                self._set_updates_paused(True)
+                self.status_label.setText("Paused")
+
             result = subprocess.run(
                 ["playerctl", "play-pause"],
                 capture_output=True, text=True, timeout=2)
             if result.returncode != 0:
+                if "playing" in before_state:
+                    self._set_updates_paused(False)
                 err = (result.stderr or result.stdout or "").strip()
                 self.status_label.setText(err or "Media toggle failed")
                 return
-            status = subprocess.run(
+
+            after = subprocess.run(
                 ["playerctl", "status"],
                 capture_output=True, text=True, timeout=2)
-            state = (status.stdout or "").strip().lower()
+            state = (after.stdout or "").strip().lower()
             if "paused" in state:
                 self._set_updates_paused(True)
                 self.status_label.setText("Paused")
             elif "playing" in state:
                 self._set_updates_paused(False)
                 self.status_label.setText("Playing")
+            elif "playing" in before_state:
+                self._set_updates_paused(True)
+                self.status_label.setText("Paused")
             else:
-                self.status_label.setText("Media toggled")
+                self._set_updates_paused(False)
+                self.status_label.setText("Playing")
         except Exception as e:
             Logger.error(f"playerctl failed: {e}")
             self.status_label.setText("Media toggle failed")
