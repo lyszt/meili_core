@@ -329,17 +329,19 @@ class HUDWindow(QWidget):
     play_audio_signal = pyqtSignal(str)
 
     def __init__(self, translation_service: TranslationService, speech: SpeechSynthesizer,
-                 ocr_service: OcrService):
+                 ocr_service: OcrService, specs=None):
         super().__init__()
 
         self.translation_service = translation_service
         self.speech = speech
         self.ocr_service = ocr_service
+        self.specs = specs
 
         self.capture_thread = None
         self._translation_workers = set()
         self.translation_enabled = True
         self.watch_enabled = False
+        self.snap_enabled = False
         self.updates_paused = False
         self.current_watch_hanzi = ""
         self.current_watch_time = 0.0
@@ -383,8 +385,13 @@ class HUDWindow(QWidget):
         self.btn_live.setCheckable(True)
         self.btn_live.setChecked(False)
         self.btn_live.setToolTip(
-            "Live mode: watch on-screen subtitles and listen to audio for retrofix")
+            "Live mode: continuously watch and listen for retrofix")
         self.btn_live.toggled.connect(self._toggle_live)
+        self.btn_snap = QPushButton("Snap")
+        self.btn_snap.setCheckable(True)
+        self.btn_snap.setChecked(False)
+        self.btn_snap.setToolTip("Snap mode: read subtitles when media is paused")
+        self.btn_snap.toggled.connect(self._toggle_snap)
         self.btn_translate = QPushButton("Trans")
         self.btn_translate.setCheckable(True)
         self.btn_translate.setChecked(self.translation_enabled)
@@ -403,13 +410,14 @@ class HUDWindow(QWidget):
         self.btn_quit = QPushButton("×")
         self.btn_quit.setToolTip("Quit")
         self.btn_quit.clicked.connect(self._quit)
-        for button in (self.btn_live, self.btn_translate, self.btn_speak_hanzi,
-                       self.btn_speak_translation, self.btn_max, self.btn_quit):
+        for button in (self.btn_live, self.btn_snap, self.btn_translate,
+                       self.btn_speak_hanzi, self.btn_speak_translation,
+                       self.btn_max, self.btn_quit):
             header_row.addWidget(button)
         layout.addWidget(header)
         self.header = header
 
-        for button in (self.btn_live, self.btn_translate):
+        for button in (self.btn_live, self.btn_snap, self.btn_translate):
             self._set_mode_button_style(button, button.isChecked())
 
         bottom_row = QHBoxLayout()
@@ -563,25 +571,34 @@ class HUDWindow(QWidget):
         self.updates_paused = paused
         if paused:
             self._watch_timer.stop()
-        elif self.watch_stream_rect is not None:
+        elif self.watch_stream_rect is not None and not self.snap_enabled:
             self._watch_timer.start(int(WATCH_INTERVAL * 1000))
 
+    def _live_performance_limited(self):
+        if self.specs is None:
+            return False
+        return not getattr(self.specs, "gpu_available", False)
+
     def _toggle_live(self, enabled: bool):
-        """Toggle live mode (watch + listen + retrofix)."""
+        """Toggle live mode (continuous watch + listen for retrofix)."""
         if enabled:
-            self._start_listening()
+            if self.btn_snap.isChecked():
+                self.btn_snap.setChecked(False)
+            self.snap_enabled = False
             self.watch_enabled = True
             if not portal_available():
                 self.status_label.setText(
                     "Portal unavailable (install python-gobject, gst-plugin-pipewire)")
                 self.watch_enabled = False
-                self._stop_listening()
                 self.btn_live.blockSignals(True)
                 self.btn_live.setChecked(False)
                 self.btn_live.blockSignals(False)
                 self._set_mode_button_style(self.btn_live, False)
                 return
             self._start_capture()
+            self._start_listening()
+            if self._live_performance_limited():
+                self.status_label.setText("Live on (performance limited)")
             self._set_mode_button_style(self.btn_live, True)
             if self.updates_paused and self.watch_stream_rect is not None:
                 self._watch_timer.stop()
@@ -589,11 +606,44 @@ class HUDWindow(QWidget):
             self._set_updates_paused(False)
             self._stop_listening()
             self.watch_enabled = False
+            if not self.snap_enabled:
+                self._stop_capture_thread()
+                self._clear_watch_region(silent=True)
+                self.last_frame = None
+            self._set_mode_button_style(self.btn_live, False)
+            self.status_label.setText("Live off")
+
+    def _toggle_snap(self, enabled: bool):
+        """Toggle snap mode (read subtitles when media is paused)."""
+        if enabled:
+            if self.btn_live.isChecked():
+                self.btn_live.setChecked(False)
+            self._stop_listening()
+            self.snap_enabled = True
+            self.watch_enabled = True
+            self._set_updates_paused(False)
+            if not portal_available():
+                self.status_label.setText(
+                    "Portal unavailable (install python-gobject, gst-plugin-pipewire)")
+                self.snap_enabled = False
+                self.watch_enabled = False
+                self.btn_snap.blockSignals(True)
+                self.btn_snap.setChecked(False)
+                self.btn_snap.blockSignals(False)
+                self._set_mode_button_style(self.btn_snap, False)
+                return
+            self._start_capture()
+            self._watch_timer.stop()
+            self._set_mode_button_style(self.btn_snap, True)
+            self.status_label.setText("Snap on")
+        else:
+            self.snap_enabled = False
+            self.watch_enabled = False
             self._stop_capture_thread()
             self._clear_watch_region(silent=True)
             self.last_frame = None
-            self._set_mode_button_style(self.btn_live, False)
-            self.status_label.setText("Live off")
+            self._set_mode_button_style(self.btn_snap, False)
+            self.status_label.setText("Snap off")
 
     def _start_capture(self):
         if self.capture_thread is not None:
@@ -611,23 +661,29 @@ class HUDWindow(QWidget):
             self.capture_thread = None
 
     def stop_stream(self):
-        """Stop live mode and tear down capture/listening."""
+        """Stop live/snap mode and tear down capture/listening."""
         if self.btn_live.isChecked():
             self.btn_live.setChecked(False)
+            return
+        if self.btn_snap.isChecked():
+            self.btn_snap.setChecked(False)
             return
         self._set_updates_paused(False)
         self._stop_listening()
         self.watch_enabled = False
+        self.snap_enabled = False
         self._stop_capture_thread()
         self._clear_watch_region(silent=True)
         self.last_frame = None
         self._set_mode_button_style(self.btn_live, False)
-        self.status_label.setText("Live off")
+        self._set_mode_button_style(self.btn_snap, False)
+        self.status_label.setText("Off")
 
     def shutdown(self):
         """Stop every thread before exit: a QThread destroyed while
         running aborts the whole process."""
         self._watch_timer.stop()
+        self.snap_enabled = False
         if self._asr_worker is not None:
             self._asr_worker.stop()
             self._asr_worker = None
@@ -651,13 +707,19 @@ class HUDWindow(QWidget):
         self.status_label.setText(message)
 
     def _on_stream_error(self, message):
-        self.watch_enabled = False
         if self.btn_live.isChecked():
             self.btn_live.blockSignals(True)
             self.btn_live.setChecked(False)
             self.btn_live.blockSignals(False)
+        if self.btn_snap.isChecked():
+            self.btn_snap.blockSignals(True)
+            self.btn_snap.setChecked(False)
+            self.btn_snap.blockSignals(False)
         self._stop_listening()
+        self.watch_enabled = False
+        self.snap_enabled = False
         self._set_mode_button_style(self.btn_live, False)
+        self._set_mode_button_style(self.btn_snap, False)
         self._stop_capture_thread()
         self._clear_watch_region(silent=True)
         self.last_frame = None
@@ -848,6 +910,18 @@ class HUDWindow(QWidget):
         Logger.error(f"Audio playback error: {error}")
         self.status_label.setText("Audio error")
 
+    def _trigger_snap_read(self):
+        if self.watch_stream_rect is None:
+            self.status_label.setText("Paused (select region)")
+            return
+        if self.last_frame is None:
+            self.status_label.setText("Paused (no frame)")
+            return
+        self.updates_paused = False
+        self._watch_timer.stop()
+        self._last_watch_region = None
+        self._watch_tick()
+
     def _toggle_media_playback(self):
         """Toggle play/pause for the active MPRIS media player (e.g. browser)."""
         if shutil.which("playerctl") is None:
@@ -859,7 +933,7 @@ class HUDWindow(QWidget):
                 capture_output=True, text=True, timeout=2)
             before_state = (before.stdout or "").strip().lower()
 
-            if "playing" in before_state:
+            if "playing" in before_state and not self.snap_enabled:
                 self._set_updates_paused(True)
                 self.status_label.setText("Paused")
 
@@ -867,7 +941,7 @@ class HUDWindow(QWidget):
                 ["playerctl", "play-pause"],
                 capture_output=True, text=True, timeout=2)
             if result.returncode != 0:
-                if "playing" in before_state:
+                if "playing" in before_state and not self.snap_enabled:
                     self._set_updates_paused(False)
                 err = (result.stderr or result.stdout or "").strip()
                 self.status_label.setText(err or "Media toggle failed")
@@ -878,16 +952,32 @@ class HUDWindow(QWidget):
                 capture_output=True, text=True, timeout=2)
             state = (after.stdout or "").strip().lower()
             if "paused" in state:
-                self._set_updates_paused(True)
-                self.status_label.setText("Paused")
+                if self.snap_enabled:
+                    self.updates_paused = False
+                    self._watch_timer.stop()
+                    self._trigger_snap_read()
+                else:
+                    self._set_updates_paused(True)
+                    self.status_label.setText("Paused")
             elif "playing" in state:
-                self._set_updates_paused(False)
-                self.status_label.setText("Playing")
+                if self.snap_enabled:
+                    self.updates_paused = False
+                    self._watch_timer.stop()
+                    self.status_label.setText("Playing")
+                else:
+                    self._set_updates_paused(False)
+                    self.status_label.setText("Playing")
             elif "playing" in before_state:
-                self._set_updates_paused(True)
-                self.status_label.setText("Paused")
+                if self.snap_enabled:
+                    self.updates_paused = False
+                    self._watch_timer.stop()
+                    self._trigger_snap_read()
+                else:
+                    self._set_updates_paused(True)
+                    self.status_label.setText("Paused")
             else:
-                self._set_updates_paused(False)
+                if not self.snap_enabled:
+                    self._set_updates_paused(False)
                 self.status_label.setText("Playing")
         except Exception as e:
             Logger.error(f"playerctl failed: {e}")
@@ -1077,7 +1167,7 @@ class HUDWindow(QWidget):
         """Periodic pass over the designated region: crop the latest
         stream frame, OCR it, and translate only when the Chinese
         content changed."""
-        if self.updates_paused:
+        if self.updates_paused and not self.snap_enabled:
             return
         if self.watch_stream_rect is None or self.last_frame is None:
             return
@@ -1095,9 +1185,13 @@ class HUDWindow(QWidget):
         crop = frame.crop((x0, y0, x1, y1))
         region = np.asarray(crop.convert("L"))
 
-        if (self._last_watch_region is not None and self._last_watch_ok
-                and np.array_equal(region, self._last_watch_region)):
-            return
+        if self._last_watch_region is not None and self._last_watch_ok:
+            if np.array_equal(region, self._last_watch_region):
+                return
+            if region.shape == self._last_watch_region.shape:
+                diff = np.mean(np.abs(region.astype(np.int16) - self._last_watch_region.astype(np.int16)))
+                if diff < 2.5:
+                    return
         self._last_watch_region = region
         self._last_watch_ok = False
         factor = max(1, min(3, -(-64 // max(1, crop.height))))

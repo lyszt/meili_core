@@ -59,7 +59,7 @@ class MeslyApp:
             model_name=self.config.translation.model, config=self.config)
         self.speech = SpeechSynthesizer(self.config, specs=self.specs)
 
-        self.window = HUDWindow(self.translation_service, self.speech, self.ocr_service)
+        self.window = HUDWindow(self.translation_service, self.speech, self.ocr_service, specs=self.specs)
         self.window.show()
 
         self.hotkey_manager.start()

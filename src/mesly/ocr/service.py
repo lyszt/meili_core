@@ -253,9 +253,36 @@ class OcrService:
             filled = self._edge_filler.fill(gray)
             if filled is None or filled.size == 0:
                 return None
+            if int((filled > 0).sum()) < 20:
+                return None
             return Image.fromarray(filled, mode="L")
         except Exception:
             return None
+
+    def _ocr_once(self, image: Image, psm: int = None) -> str:
+        rapid_text = ""
+        if self._rapidocr is not None:
+            try:
+                img = np.array(image.convert("RGB"))
+                img = img[:, :, ::-1]
+                result, _ = self._rapidocr(img)
+                if result:
+                    texts = [str(item[1]).strip() for item in result
+                             if len(item) > 1 and str(item[1]).strip()]
+                    if texts:
+                        rapid_text = " ".join(texts)
+                        Logger.info(f"OCR (RapidOCR): '{rapid_text[:60]}'")
+                        if _HAS_HANZI.search(rapid_text):
+                            return rapid_text
+            except Exception as e:
+                Logger.warning(f"OCR: RapidOCR failed ({e})")
+
+        tess_text = self._tesseract_best(image, psm=psm)
+        if tess_text and _HAS_HANZI.search(tess_text):
+            return tess_text
+        if rapid_text:
+            return rapid_text
+        return tess_text or ""
 
     def image_to_text(self, image: Image, psm: int = None) -> str:
         """OCR a PIL image, preferring results that contain Chinese text."""
@@ -272,38 +299,15 @@ class OcrService:
             if cached is not None:
                 Logger.info("OCR: cache hit")
                 return cached
-            rapid_text = ""
-            if self._rapidocr is not None:
-                try:
-                    img = np.array(image.convert("RGB"))
-                    img = img[:, :, ::-1]
-                    result, _ = self._rapidocr(img)
-                    if result:
-                        texts = [str(item[1]).strip() for item in result
-                                 if len(item) > 1 and str(item[1]).strip()]
-                        if texts:
-                            rapid_text = " ".join(texts)
-                            Logger.info(f"OCR (RapidOCR): '{rapid_text[:60]}'")
-                            if _HAS_HANZI.search(rapid_text):
-                                with self._cache_lock:
-                                    if len(self._cache) >= 256:
-                                        self._cache.pop(next(iter(self._cache)))
-                                    self._cache[key] = rapid_text
-                                return rapid_text
-                except Exception as e:
-                    Logger.warning(f"OCR: RapidOCR failed ({e})")
 
-            tess_text = self._tesseract_best(image, psm=psm)
-            if tess_text and _HAS_HANZI.search(tess_text):
-                result_text = tess_text
-            elif rapid_text:
-                result_text = rapid_text
-            else:
-                result_text = tess_text or ""
-
-            if not _HAS_HANZI.search(result_text):
-                filled = self._edge_filled_image(image)
-                if filled is not None:
+            result_text = ""
+            filled = self._edge_filled_image(image)
+            if filled is not None:
+                result_text = self._tesseract_best(filled, psm=7)
+                if _HAS_HANZI.search(result_text):
+                    Logger.info("OCR: used edge-filled image (Tesseract)")
+                if not _HAS_HANZI.search(result_text):
+                    rapid_text = ""
                     if self._rapidocr is not None:
                         try:
                             img = np.array(filled.convert("RGB"))
@@ -313,17 +317,18 @@ class OcrService:
                                 texts = [str(item[1]).strip() for item in result
                                          if len(item) > 1 and str(item[1]).strip()]
                                 if texts:
-                                    text = " ".join(texts)
-                                    if _HAS_HANZI.search(text):
-                                        Logger.info(f"OCR (OpenCL edge-fill): '{text[:60]}'")
-                                        result_text = text
-                        except Exception:
-                            pass
-                    if not _HAS_HANZI.search(result_text):
-                        text = self._tesseract_best(filled, psm=psm)
-                        if text and _HAS_HANZI.search(text):
-                            Logger.info(f"OCR (OpenCL edge-fill/Tesseract): '{text[:60]}'")
-                            result_text = text
+                                    rapid_text = " ".join(texts)
+                                    Logger.info(f"OCR (RapidOCR, edge-filled): '{rapid_text[:60]}'")
+                        except Exception as e:
+                            Logger.warning(f"OCR: RapidOCR failed ({e})")
+                    if _HAS_HANZI.search(rapid_text):
+                        result_text = rapid_text
+                    elif not result_text:
+                        result_text = rapid_text
+            if not _HAS_HANZI.search(result_text):
+                original_result = self._ocr_once(image, psm=psm)
+                if _HAS_HANZI.search(original_result) or not result_text:
+                    result_text = original_result
 
             with self._cache_lock:
                 if len(self._cache) >= 256:

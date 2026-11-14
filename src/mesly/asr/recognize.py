@@ -23,10 +23,10 @@ class AsrService:
         try:
             import ctranslate2
             if ctranslate2.get_cuda_device_count() > 0:
-                return "cuda", "float16"
+                return "cuda", ["float16", "int8_float16", "float32", "int8"]
         except Exception:
             pass
-        return "cpu", "int8"
+        return "cpu", ["int8"]
 
     def _ensure_model(self) -> bool:
         if self._load_failed:
@@ -34,21 +34,31 @@ class AsrService:
         if self.model is None:
             try:
                 from faster_whisper import WhisperModel
-                cpu_threads = max(1, os.cpu_count() or 1)
-                device, compute_type = self._select_device()
-                Logger.info(f"ASR: loading whisper '{MODEL_NAME}' "
-                            f"(device={device}, compute_type={compute_type}, "
-                            f"cpu_threads={cpu_threads})...")
-                kwargs = {"num_workers": 1}
-                if device == "cpu":
-                    kwargs["cpu_threads"] = cpu_threads
-                self.model = WhisperModel(
-                    MODEL_NAME, device=device, compute_type=compute_type, **kwargs)
-                Logger.info("ASR: model ready")
             except Exception as e:
                 self._load_failed = True
                 Logger.error(f"ASR: model load failed: {e}")
                 return False
+            cpu_threads = max(1, os.cpu_count() or 1)
+            device, compute_types = self._select_device()
+            last_error = None
+            for compute_type in compute_types:
+                try:
+                    Logger.info(f"ASR: loading whisper '{MODEL_NAME}' "
+                                f"(device={device}, compute_type={compute_type}, "
+                                f"cpu_threads={cpu_threads})...")
+                    kwargs = {"num_workers": 1}
+                    if device == "cpu":
+                        kwargs["cpu_threads"] = cpu_threads
+                    self.model = WhisperModel(
+                        MODEL_NAME, device=device, compute_type=compute_type, **kwargs)
+                    Logger.info("ASR: model ready")
+                    return True
+                except Exception as e:
+                    last_error = e
+                    self.model = None
+            self._load_failed = True
+            Logger.error(f"ASR: model load failed: {last_error}")
+            return False
         return True
 
     def transcribe(self, audio: np.ndarray) -> str:
