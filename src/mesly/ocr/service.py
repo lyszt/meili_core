@@ -3,8 +3,10 @@ OCR service: resolves the tessdata directory and language packs,
 then runs Tesseract on captured images.
 """
 
+import hashlib
 import os
 import re
+import threading
 
 import numpy as np
 import pytesseract
@@ -55,6 +57,8 @@ class OcrService:
         self.lang = self._resolve_langs()
         self._tessdata_dir = self._resolve_tessdata()
         self._rapidocr = self._init_rapidocr()
+        self._cache = {}
+        self._cache_lock = threading.Lock()
 
     def _init_rapidocr(self):
         try:
@@ -223,9 +227,29 @@ class OcrService:
             Logger.error(f"OCR failed: {e}")
             return ""
 
+    def _cache_key(self, image: Image, psm):
+        try:
+            data = image.tobytes()
+        except Exception:
+            data = image.convert("RGB").tobytes()
+        digest = hashlib.md5(data).hexdigest()
+        return (digest, image.size, image.mode, self.lang, psm)
+
     def image_to_text(self, image: Image, psm: int = None) -> str:
         """OCR a PIL image, preferring results that contain Chinese text."""
+        key = self._cache_key(image, psm)
+        with self._cache_lock:
+            cached = self._cache.get(key)
+        if cached is not None:
+            Logger.info("OCR: cache hit")
+            return cached
+
         with ocr_lock:
+            with self._cache_lock:
+                cached = self._cache.get(key)
+            if cached is not None:
+                Logger.info("OCR: cache hit")
+                return cached
             rapid_text = ""
             if self._rapidocr is not None:
                 try:
@@ -239,13 +263,23 @@ class OcrService:
                             rapid_text = " ".join(texts)
                             Logger.info(f"OCR (RapidOCR): '{rapid_text[:60]}'")
                             if _HAS_HANZI.search(rapid_text):
+                                with self._cache_lock:
+                                    if len(self._cache) >= 256:
+                                        self._cache.pop(next(iter(self._cache)))
+                                    self._cache[key] = rapid_text
                                 return rapid_text
                 except Exception as e:
                     Logger.warning(f"OCR: RapidOCR failed ({e})")
 
             tess_text = self._tesseract_best(image, psm=psm)
             if tess_text and _HAS_HANZI.search(tess_text):
-                return tess_text
-            if rapid_text:
-                return rapid_text
-            return tess_text or ""
+                result_text = tess_text
+            elif rapid_text:
+                result_text = rapid_text
+            else:
+                result_text = tess_text or ""
+            with self._cache_lock:
+                if len(self._cache) >= 256:
+                    self._cache.pop(next(iter(self._cache)))
+                self._cache[key] = result_text
+            return result_text

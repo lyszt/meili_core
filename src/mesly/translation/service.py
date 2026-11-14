@@ -14,7 +14,7 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from ..utils import Logger
 
 DEFAULT_MODEL = "facebook/nllb-200-distilled-600M"
-CACHE_TTL_SECONDS = 10
+CACHE_TTL_SECONDS = 3600
 MAX_MODEL_TOKENS = 512
 MAX_NEW_TOKENS = 48
 
