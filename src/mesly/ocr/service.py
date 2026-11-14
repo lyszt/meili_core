@@ -66,7 +66,8 @@ class OcrService:
         except Exception:
             return None
 
-        if self._cuda_available():
+        providers = self._available_providers()
+        if "CUDAExecutionProvider" in providers:
             for kwargs in (
                 {"det_use_cuda": True, "cls_use_cuda": True, "rec_use_cuda": True},
                 {"providers": ["CUDAExecutionProvider", "CPUExecutionProvider"]},
@@ -77,6 +78,13 @@ class OcrService:
                     return engine
                 except Exception:
                     continue
+        if "VulkanExecutionProvider" in providers:
+            try:
+                engine = RapidOCR(providers=["VulkanExecutionProvider", "CPUExecutionProvider"])
+                Logger.info("OCR: using RapidOCR engine (Vulkan)")
+                return engine
+            except Exception:
+                pass
 
         Logger.info("OCR: using RapidOCR engine (CPU)")
         try:
@@ -84,12 +92,12 @@ class OcrService:
         except Exception:
             return None
 
-    def _cuda_available(self):
+    def _available_providers(self):
         try:
             import onnxruntime as ort
-            return "CUDAExecutionProvider" in ort.get_available_providers()
+            return ort.get_available_providers()
         except Exception:
-            return False
+            return []
 
     def _resolve_langs(self) -> str:
         """Map config language codes to a Tesseract lang string (e.g. 'eng+chi_sim')."""
