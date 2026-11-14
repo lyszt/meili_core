@@ -6,43 +6,49 @@
 
 <img width="865" height="427" alt="image" src="https://github.com/user-attachments/assets/4387c585-8eef-4c79-b0fd-69679bf4efb2" />
 
-
-**A companion overlay for studying Chinese while you watch, listen, and browse.**
+**A desktop overlay for reading, translating, and studying Chinese.**
 
 ---
 
 ## What is Meili?
 
-Meili is a lightweight, transparent overlay that helps you follow Chinese in real time. Whether you’re watching a show, listening to dialogue, or reading on a webpage, Meili puts the characters, pinyin, word meanings, and an English translation right on your screen — so you can keep up without breaking your flow.
+Meili is a desktop application for Chinese text recognition, translation, and pronunciation support. It uses a transparent overlay to display recognized Chinese text alongside pinyin, vocabulary definitions, and English translations.
 
-Everything runs on your own machine.
+Meili can recognize subtitles from video playback, extract text from selected screen regions, and process text displayed in other desktop applications. It also includes audio recognition and text-to-speech functionality.
 
-## What you can do
+Processing runs locally on your machine.
 
-### Follow along with shows and videos
-Turn on **Live** mode, pick the window you’re watching, and drag a box over the subtitles. Meili reads the subtitles as they appear and translates them instantly, while also listening to the audio to catch and correct what’s being said. Click anywhere on the overlay background to play/pause your media.
+## Features
 
-### See more than just a translation
-For each line, Meili shows the Chinese text, pinyin, a breakdown of word meanings, and a translation — giving you the context to actually learn, not just read along.
+### Live subtitle recognition
 
-### Translate anything on your desktop
-- **Select text** anywhere on your screen to translate it on the spot.
-- Press **Ctrl+Alt+S** to capture what’s on screen and translate any Chinese it finds.
+Meili can monitor a selected window and recognize subtitles within a user-defined screen region. Recognized text is displayed in the overlay with pinyin, vocabulary breakdowns, and translations.
 
-### Hear it out loud
-Have Meili read the Chinese or the translation aloud to help with listening and pronunciation.
+Live mode also uses audio recognition to help identify spoken dialogue and correct subtitle recognition. Clicking the overlay background toggles playback of the selected media.
 
-### Translate in your browser
-With the included browser extension, select Chinese text on any page to see an in-page translation.
+### Chinese text breakdown
+
+Each recognized line includes the original Chinese characters, pinyin with tone marks, individual word meanings, and an English translation. This provides both a translation of the complete sentence and information about its vocabulary.
+
+### Screen text recognition
+
+Meili can recognize and translate Chinese text from other applications through screen selection or capture. Select a region of text to process it directly, or press **Ctrl+Alt+S** to capture the screen and extract any Chinese text it contains.
+
+### Text-to-speech
+
+Meili can read recognized Chinese text and English translations aloud, providing audio alongside the displayed text.
+
+### Browser extension
+
+An optional browser extension allows you to select Chinese text on webpages and view its translation directly within the page.
 
 ## Getting started
 
 ### Requirements
-- Linux (tested on Wayland), Python 3.12+, and Node.js (for the browser extension)
-- OCR language data for Chinese/English (included in this repo)
-- A Chromium-based browser for the optional extension
 
-### Install and run
+Meili requires Linux (tested on Wayland) and Python 3.12 or later. Node.js is only needed to build the optional browser extension. Chinese and English OCR language data are included in the repository. The extension requires a Chromium-based browser.
+
+### Installation and execution
 
 ```bash
 # Install system dependencies (Arch Linux)
@@ -54,17 +60,17 @@ make install-pip
 # Build the browser extension (optional)
 make build-extension
 
-# Create your local config
+# Create your local configuration
 cp config/example_config.yaml config/config.yaml
 
 # Run Meili
 make run
 ```
 
-To use the browser extension, open `chrome://extensions`, enable Developer Mode, choose **Load unpacked**, and select `src/extension/dist`.
+To install the browser extension, navigate to `chrome://extensions`, enable Developer Mode, select **Load unpacked**, and choose `src/extension/dist`.
 
-> Meili works out of the box with the default settings. You can tweak behavior (like language, models, or GPU use) in `config/config.yaml` if you’d like.
+Meili uses default settings on first launch. Additional options, including language preferences, models, and GPU utilization, can be configured in `config/config.yaml`.
 
 ## Contributing
 
-Contributions are welcome — feel free to open an issue or pull request. See `AGENTS.md` for development notes.
+Contributions are welcome. Issues and pull requests can be submitted through the repository. See `AGENTS.md` for development notes.
