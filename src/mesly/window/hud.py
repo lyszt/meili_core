@@ -1100,10 +1100,10 @@ class HUDWindow(QWidget):
             return
         self._last_watch_region = region
         self._last_watch_ok = False
-        factor = max(1, min(4, -(-96 // crop.height)))
+        factor = max(1, min(3, -(-64 // max(1, crop.height))))
         if factor > 1:
             crop = crop.resize((crop.width * factor, crop.height * factor),
-                               Image.LANCZOS)
+                               Image.BILINEAR)
         psm = 7 if (y1 - y0) <= 60 else 6
 
         self.status_label.setText("Reading region…")

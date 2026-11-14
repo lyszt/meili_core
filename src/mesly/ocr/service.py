@@ -125,9 +125,9 @@ class OcrService:
         """Preprocess image for subtitle OCR (grayscale, scale, contrast, threshold)."""
         gray = image if image.mode == "L" else image.convert("L")
         w, h = gray.size
-        if h < 64:
-            scale = max(2, min(4, -(-64 // max(1, h))))
-            gray = gray.resize((w * scale, h * scale), Image.LANCZOS)
+        if h < 48:
+            scale = max(2, min(3, -(-48 // max(1, h))))
+            gray = gray.resize((w * scale, h * scale), Image.BILINEAR)
         gray = ImageOps.autocontrast(gray, cutoff=1)
         arr = np.asarray(gray)
         if arr.size:
