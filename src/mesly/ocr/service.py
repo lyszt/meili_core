@@ -14,7 +14,7 @@ from PIL import Image, ImageOps
 
 from ..config import ConfigTemplate
 from ..utils import Logger
-from ..utils.inference import inference_lock
+from ..utils.inference import ocr_lock
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -225,7 +225,7 @@ class OcrService:
 
     def image_to_text(self, image: Image, psm: int = None) -> str:
         """OCR a PIL image, preferring results that contain Chinese text."""
-        with inference_lock:
+        with ocr_lock:
             rapid_text = ""
             if self._rapidocr is not None:
                 try:

@@ -36,6 +36,7 @@ class AsrWorker(QThread):
         self.service = AsrService()
         self.capture = None
         self._executor = None
+        self._transcribing = False
 
     def run(self):
         self._executor = ThreadPoolExecutor(max_workers=1,
@@ -77,21 +78,31 @@ class AsrWorker(QThread):
                      or total >= MAX_UTTERANCE))
         if not done:
             return
-        if self._speech >= MIN_SPEECH:
-            self._executor.submit(self._transcribe, self._buffer.copy())
+        had_speech = self._speech >= MIN_SPEECH
+        audio = self._buffer.copy()
         self._buffer = np.empty(0, dtype=np.float32)
         self._speech = 0.0
         self._silence = 0.0
+        if not had_speech:
+            return
+        if self._transcribing:
+            Logger.info("ASR: skipped utterance (busy)")
+            return
+        self._transcribing = True
+        self._executor.submit(self._transcribe, audio)
 
     def _transcribe(self, audio: np.ndarray):
-        seconds = len(audio) / SAMPLE_RATE
-        started = time.perf_counter()
-        text = self.service.transcribe(audio)
-        Logger.info(
-            f"ASR {time.perf_counter() - started:.2f}s "
-            f"({seconds:.1f}s audio): '{text[:60]}'")
-        if text:
-            self.utterance.emit(text)
+        try:
+            seconds = len(audio) / SAMPLE_RATE
+            started = time.perf_counter()
+            text = self.service.transcribe(audio)
+            Logger.info(
+                f"ASR {time.perf_counter() - started:.2f}s "
+                f"({seconds:.1f}s audio): '{text[:60]}'")
+            if text:
+                self.utterance.emit(text)
+        finally:
+            self._transcribing = False
 
     def stop(self):
         if self.capture is not None:
