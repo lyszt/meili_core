@@ -4,6 +4,7 @@ then runs Tesseract on captured images.
 """
 
 import os
+import re
 
 import numpy as np
 import pytesseract
@@ -18,6 +19,7 @@ from ..utils.inference import inference_lock
 ROOT = Path(__file__).resolve().parents[3]
 
 MIN_WORD_CONFIDENCE = 40.0
+_HAS_HANZI = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
 LANG_ALIASES = {
     "en": "eng",
@@ -55,13 +57,35 @@ class OcrService:
         self._rapidocr = self._init_rapidocr()
 
     def _init_rapidocr(self):
-        """Use RapidOCR when available (better for Chinese subtitles)."""
         try:
             from rapidocr_onnxruntime import RapidOCR
-            Logger.info("OCR: using RapidOCR engine")
+        except Exception:
+            return None
+
+        if self._cuda_available():
+            for kwargs in (
+                {"det_use_cuda": True, "cls_use_cuda": True, "rec_use_cuda": True},
+                {"providers": ["CUDAExecutionProvider", "CPUExecutionProvider"]},
+            ):
+                try:
+                    engine = RapidOCR(**kwargs)
+                    Logger.info("OCR: using RapidOCR engine (CUDA)")
+                    return engine
+                except Exception:
+                    continue
+
+        Logger.info("OCR: using RapidOCR engine (CPU)")
+        try:
             return RapidOCR()
         except Exception:
             return None
+
+    def _cuda_available(self):
+        try:
+            import onnxruntime as ort
+            return "CUDAExecutionProvider" in ort.get_available_providers()
+        except Exception:
+            return False
 
     def _resolve_langs(self) -> str:
         """Map config language codes to a Tesseract lang string (e.g. 'eng+chi_sim')."""
@@ -128,15 +152,81 @@ class OcrService:
             gray = Image.fromarray(arr, mode="L")
         return gray
 
-    def image_to_text(self, image: Image, psm: int = None) -> str:
-        """
-        OCR a PIL image using the configured languages.
-
-        Prefers RapidOCR when installed (better for Chinese subtitles),
-        otherwise uses Tesseract with preprocessing and PSM fallbacks.
-        """
+    def _tesseract_best(self, image: Image, psm: int = None):
         base_config = f"--psm {psm}" if psm else ""
+        processed = None
+        if self._tessdata_dir:
+            try:
+                processed = self._preprocess(image)
+                psm_candidates = [psm] if psm else [7, 6]
+                seen = set()
+                psm_list = []
+                for p in psm_candidates + [7, 6, 11]:
+                    if p not in seen:
+                        seen.add(p)
+                        psm_list.append(p)
+                best_text = ""
+                best_score = -1.0
+                last_confs = []
+                for p in psm_list:
+                    tess_config = f"--oem 1 --psm {p}"
+                    data = pytesseract.image_to_data(
+                        processed, lang=self.lang, config=tess_config,
+                        output_type=Output.DICT)
+                    words = []
+                    confidences = []
+                    for level, text, conf in zip(data["level"], data["text"],
+                                                 data["conf"]):
+                        if level != 5:
+                            continue
+                        text = text.strip()
+                        if not text:
+                            continue
+                        try:
+                            confidence = float(conf)
+                        except (TypeError, ValueError):
+                            confidence = -1.0
+                        confidences.append(confidence)
+                        if confidence >= MIN_WORD_CONFIDENCE:
+                            words.append(text)
+                    fallback = (not words and confidences
+                                and max(confidences) >= 0)
+                    if fallback:
+                        words = [t.strip() for lvl, t in zip(data["level"], data["text"])
+                                 if lvl == 5 and t.strip()]
+                    candidate = " ".join(words)
+                    valid_confs = [c for c in confidences if c >= 0]
+                    avg_conf = (sum(valid_confs) / len(valid_confs)) if valid_confs else 0.0
+                    hanzi_bonus = 1.5 if _HAS_HANZI.search(candidate or "") else 0.0
+                    score = len(candidate) + avg_conf / 100.0 + hanzi_bonus
+                    if score > best_score:
+                        best_score = score
+                        best_text = candidate
+                        last_confs = confidences
+                    if len(candidate) >= 2 and avg_conf >= 45 and _HAS_HANZI.search(candidate):
+                        last_confs = confidences
+                        best_text = candidate
+                        break
+                if last_confs:
+                    Logger.info(
+                        f"OCR confidences: {['%.0f' % c for c in last_confs]}")
+                return best_text
+            except Exception as e:
+                Logger.error(f"OCR failed with langs '{self.lang}': {e}")
+
+        try:
+            if processed is None:
+                processed = self._preprocess(image)
+            tess_config = base_config or "--oem 1 --psm 7"
+            return pytesseract.image_to_string(processed, config=tess_config).strip()
+        except Exception as e:
+            Logger.error(f"OCR failed: {e}")
+            return ""
+
+    def image_to_text(self, image: Image, psm: int = None) -> str:
+        """OCR a PIL image, preferring results that contain Chinese text."""
         with inference_lock:
+            rapid_text = ""
             if self._rapidocr is not None:
                 try:
                     img = np.array(image.convert("RGB"))
@@ -146,76 +236,16 @@ class OcrService:
                         texts = [str(item[1]).strip() for item in result
                                  if len(item) > 1 and str(item[1]).strip()]
                         if texts:
-                            text = " ".join(texts)
-                            Logger.info(f"OCR (RapidOCR): '{text[:60]}'")
-                            return text
+                            rapid_text = " ".join(texts)
+                            Logger.info(f"OCR (RapidOCR): '{rapid_text[:60]}'")
+                            if _HAS_HANZI.search(rapid_text):
+                                return rapid_text
                 except Exception as e:
-                    Logger.warning(f"OCR: RapidOCR failed, falling back to Tesseract ({e})")
+                    Logger.warning(f"OCR: RapidOCR failed ({e})")
 
-            processed = None
-            if self._tessdata_dir:
-                try:
-                    processed = self._preprocess(image)
-                    psm_candidates = [psm] if psm else [7, 6]
-                    seen = set()
-                    psm_list = []
-                    for p in psm_candidates + [7, 6, 11]:
-                        if p not in seen:
-                            seen.add(p)
-                            psm_list.append(p)
-                    best_text = ""
-                    best_score = -1.0
-                    last_confs = []
-                    for p in psm_list:
-                        tess_config = f"--oem 1 --psm {p}"
-                        data = pytesseract.image_to_data(
-                            processed, lang=self.lang, config=tess_config,
-                            output_type=Output.DICT)
-                        words = []
-                        confidences = []
-                        for level, text, conf in zip(data["level"], data["text"],
-                                                     data["conf"]):
-                            if level != 5:
-                                continue
-                            text = text.strip()
-                            if not text:
-                                continue
-                            try:
-                                confidence = float(conf)
-                            except (TypeError, ValueError):
-                                confidence = -1.0
-                            confidences.append(confidence)
-                            if confidence >= MIN_WORD_CONFIDENCE:
-                                words.append(text)
-                        fallback = (not words and confidences
-                                    and max(confidences) >= 0)
-                        if fallback:
-                            words = [t.strip() for lvl, t in zip(data["level"], data["text"])
-                                     if lvl == 5 and t.strip()]
-                        candidate = " ".join(words)
-                        valid_confs = [c for c in confidences if c >= 0]
-                        avg_conf = (sum(valid_confs) / len(valid_confs)) if valid_confs else 0.0
-                        score = len(candidate) + avg_conf / 100.0
-                        if score > best_score:
-                            best_score = score
-                            best_text = candidate
-                            last_confs = confidences
-                        if len(candidate) >= 2 and avg_conf >= 45:
-                            last_confs = confidences
-                            best_text = candidate
-                            break
-                    if last_confs:
-                        Logger.info(
-                            f"OCR confidences: {['%.0f' % c for c in last_confs]}")
-                    return best_text
-                except Exception as e:
-                    Logger.error(f"OCR failed with langs '{self.lang}': {e}")
-
-            try:
-                if processed is None:
-                    processed = self._preprocess(image)
-                tess_config = base_config or "--oem 1 --psm 7"
-                return pytesseract.image_to_string(processed, config=tess_config).strip()
-            except Exception as e:
-                Logger.error(f"OCR failed: {e}")
-                return ""
+            tess_text = self._tesseract_best(image, psm=psm)
+            if tess_text and _HAS_HANZI.search(tess_text):
+                return tess_text
+            if rapid_text:
+                return rapid_text
+            return tess_text or ""

@@ -27,12 +27,24 @@ venv:
 	$(PY) -m venv $(VENV_DIR)
 	@echo "Activating venv and installing requirements..."
 	. $(VENV_DIR)/bin/activate && python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+	@if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then \
+		echo "CUDA GPU detected, installing onnxruntime-gpu..."; \
+		. $(VENV_DIR)/bin/activate && python -m pip install --upgrade onnxruntime-gpu || echo "Warning: failed to install onnxruntime-gpu"; \
+	else \
+		echo "No CUDA GPU detected, keeping CPU ONNX Runtime."; \
+	fi
 	@echo "Virtualenv setup complete. To activate: . $(VENV_DIR)/bin/activate"
 
 install-pip:
 	@echo "Installing pip requirements using $(PY)..."
 	$(PY) -m pip install --upgrade pip
 	$(PY) -m pip install -r requirements.txt
+	@if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then \
+		echo "CUDA GPU detected, installing onnxruntime-gpu..."; \
+		$(PY) -m pip install --upgrade onnxruntime-gpu || echo "Warning: failed to install onnxruntime-gpu"; \
+	else \
+		echo "No CUDA GPU detected, keeping CPU ONNX Runtime."; \
+	fi
 	@echo "Pip requirements installed."
 
 vendor:

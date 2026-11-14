@@ -764,7 +764,7 @@ class HUDWindow(QWidget):
         self._start_translation(hanzi)
 
     def _on_translation(self, worker, result):
-        if not self.translation_enabled or worker.text != self.last_hanzi:
+        if self.updates_paused or not self.translation_enabled or worker.text != self.last_hanzi:
             return
         translation = result.get("translation", "")
         self.last_translation = translation
@@ -777,7 +777,7 @@ class HUDWindow(QWidget):
         self._sync_card()
 
     def _on_translation_error(self, worker, message):
-        if not self.translation_enabled or worker.text != self.last_hanzi:
+        if self.updates_paused or not self.translation_enabled or worker.text != self.last_hanzi:
             return
         self.translation_label.show()
         self.translation_label.setText(
@@ -1076,8 +1076,8 @@ class HUDWindow(QWidget):
         y0 = max(0, min(rect.y() - PAD, fh - 1))
         x1 = max(x0 + 1, min(rect.x() + rect.width() + PAD, fw))
         y1 = max(y0 + 1, min(rect.y() + rect.height() + PAD, fh))
-        crop = frame.crop((x0, y0, x1, y1)).convert("L")
-        region = np.asarray(crop)
+        crop = frame.crop((x0, y0, x1, y1))
+        region = np.asarray(crop.convert("L"))
 
         if (self._last_watch_region is not None and self._last_watch_ok
                 and np.array_equal(region, self._last_watch_region)):
@@ -1098,9 +1098,12 @@ class HUDWindow(QWidget):
     def _on_region_ocr_finished(self, text):
         if self.updates_paused:
             return
-        hanzi = cjk_only(text) if text else ""
+        raw = (text or "").strip()
+        hanzi = cjk_only(raw) if raw else ""
         self._last_watch_ok = bool(hanzi)
         if not hanzi:
+            if raw:
+                Logger.info(f"OCR raw (no CJK): '{raw[:80]}'")
             if self.watch_stream_rect is not None:
                 if self.current_watch_hanzi and self.last_hanzi == self.current_watch_hanzi:
                     self.hanzi_label.setText("")
