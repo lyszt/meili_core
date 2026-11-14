@@ -1,6 +1,7 @@
 # OCR
 pytesseract
 rapidocr-onnxruntime
+pyopencl
 
 # Translation (local Helsinki-NLP / MarianMT)
 # transformers v5 removed the "translation" pipeline task and MarianMT support

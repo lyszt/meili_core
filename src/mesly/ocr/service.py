@@ -17,6 +17,7 @@ from PIL import Image, ImageOps
 from ..config import ConfigTemplate
 from ..utils import Logger
 from ..utils.inference import ocr_lock
+from .edge_fill import OpenCLEdgeFiller
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -57,6 +58,7 @@ class OcrService:
         self.lang = self._resolve_langs()
         self._tessdata_dir = self._resolve_tessdata()
         self._rapidocr = self._init_rapidocr()
+        self._edge_filler = OpenCLEdgeFiller()
         self._cache = {}
         self._cache_lock = threading.Lock()
 
@@ -243,6 +245,18 @@ class OcrService:
         digest = hashlib.md5(data).hexdigest()
         return (digest, image.size, image.mode, self.lang, psm)
 
+    def _edge_filled_image(self, image: Image):
+        try:
+            if not getattr(self._edge_filler, "available", False):
+                return None
+            gray = np.asarray(image.convert("L"))
+            filled = self._edge_filler.fill(gray)
+            if filled is None or filled.size == 0:
+                return None
+            return Image.fromarray(filled, mode="L")
+        except Exception:
+            return None
+
     def image_to_text(self, image: Image, psm: int = None) -> str:
         """OCR a PIL image, preferring results that contain Chinese text."""
         key = self._cache_key(image, psm)
@@ -286,6 +300,31 @@ class OcrService:
                 result_text = rapid_text
             else:
                 result_text = tess_text or ""
+
+            if not _HAS_HANZI.search(result_text):
+                filled = self._edge_filled_image(image)
+                if filled is not None:
+                    if self._rapidocr is not None:
+                        try:
+                            img = np.array(filled.convert("RGB"))
+                            img = img[:, :, ::-1]
+                            result, _ = self._rapidocr(img)
+                            if result:
+                                texts = [str(item[1]).strip() for item in result
+                                         if len(item) > 1 and str(item[1]).strip()]
+                                if texts:
+                                    text = " ".join(texts)
+                                    if _HAS_HANZI.search(text):
+                                        Logger.info(f"OCR (OpenCL edge-fill): '{text[:60]}'")
+                                        result_text = text
+                        except Exception:
+                            pass
+                    if not _HAS_HANZI.search(result_text):
+                        text = self._tesseract_best(filled, psm=psm)
+                        if text and _HAS_HANZI.search(text):
+                            Logger.info(f"OCR (OpenCL edge-fill/Tesseract): '{text[:60]}'")
+                            result_text = text
+
             with self._cache_lock:
                 if len(self._cache) >= 256:
                     self._cache.pop(next(iter(self._cache)))
