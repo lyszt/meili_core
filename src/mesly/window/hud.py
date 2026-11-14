@@ -166,7 +166,7 @@ class StudyCard(QWidget):
         self.setCursor(Qt.SizeAllCursor)
         self.setStyleSheet("""
             #hud_card {
-                background: rgba(8, 10, 16, 165);
+                background: rgba(8, 10, 16, 60);
                 border-radius: 14px;
                 border: 1px solid rgba(255, 255, 255, 26);
             }
