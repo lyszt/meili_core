@@ -12,7 +12,6 @@ from torch import nn
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 from ..utils import Logger
-from ..utils.inference import inference_lock
 
 DEFAULT_MODEL = "facebook/nllb-200-distilled-600M"  # better zh->en quality than MarianMT
 CACHE_TTL_SECONDS = 10
@@ -123,8 +122,7 @@ class TranslationService:
 
         try:
             t0 = time.perf_counter()
-            with inference_lock:
-                translation = self._translate_chunks(text)
+            translation = self._translate_chunks(text)
             elapsed = time.perf_counter() - t0
             with self._cache_lock:
                 self._cache[cache_key] = {"translation": translation, "timestamp": time.time()}

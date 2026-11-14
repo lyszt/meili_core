@@ -1,4 +1,4 @@
-"""Shared lock to serialize CPU-heavy inference (OCR/ASR/translation/TTS)."""
+"""Shared lock to serialize CPU-heavy OCR and ASR inference."""
 
 import threading
 
