@@ -7,9 +7,9 @@ import numpy as np
 from ..utils import Logger
 from ..utils.inference import inference_lock
 
-# Whisper model size. "medium" is the accuracy floor that makes the
-# feature worth using; anything smaller mishears too much.
-MODEL_NAME = "medium"
+# Whisper model size. "small" is a practical live default on CPU: much
+# faster than "medium" while keeping reasonable Mandarin accuracy.
+MODEL_NAME = "small"
 
 
 class AsrService:
@@ -43,7 +43,7 @@ class AsrService:
         try:
             with inference_lock:
                 segments, _info = self.model.transcribe(
-                    audio, language="zh", vad_filter=True, beam_size=1,
+                    audio, language="zh", vad_filter=False, beam_size=1,
                     condition_on_previous_text=False)
             texts = [s.text.strip() for s in segments if s.text.strip()]
             return "".join(texts)

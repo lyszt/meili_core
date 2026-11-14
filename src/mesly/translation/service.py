@@ -18,10 +18,10 @@ DEFAULT_MODEL = "Helsinki-NLP/opus-mt-zh-en"  # dedicated zh->en model
 CACHE_TTL_SECONDS = 10
 # MarianMT's positional encoding limit
 MAX_MODEL_TOKENS = 512
-# Cap on generated tokens: subtitles/utterances are short, so a tight cap
-# keeps CPU inference fast. Scale with the input instead of generating
-# up to a large fixed maximum.
-MAX_NEW_TOKENS = 32
+# Cap on generated tokens: subtitles/utterances are short, but fast speech
+# can pack more into one segment, so allow a bit of headroom while still
+# scaling with input to keep CPU inference quick.
+MAX_NEW_TOKENS = 48
 
 
 class TranslationService:
@@ -220,7 +220,7 @@ class TranslationService:
         input_len = inputs["input_ids"].shape[1]
         output = self.model.generate(
             **inputs,
-            max_new_tokens=max(8, min(MAX_NEW_TOKENS, input_len + 8)),
+            max_new_tokens=max(12, min(MAX_NEW_TOKENS, input_len + 16)),
             num_beams=1,
             do_sample=False)
         return self.tokenizer.decode(output[0], skip_special_tokens=True).strip()
