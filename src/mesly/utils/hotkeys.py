@@ -36,10 +36,8 @@ class HotkeyManager:
 
         Logger.info("Starting hotkey listener...")
 
-        # Create GlobalHotKeys listener
         self._listener = keyboard.GlobalHotKeys(self._hotkeys)
 
-        # Start listener in daemon thread so it doesn't block app exit
         self._listener_thread = threading.Thread(
             target=self._listener.start,
             daemon=True,

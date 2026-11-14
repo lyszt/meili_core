@@ -4,8 +4,6 @@ Text filters for OCR output: keep only Chinese content.
 
 import re
 
-# Han + CJK punctuation + fullwidth forms; digits and spaces are kept
-# when embedded between CJK characters (e.g. "第 01 集")
 _CJK_RUN = re.compile(
     r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
     r"\u3000-\u303f\uff00-\uffef0-9\s]+"

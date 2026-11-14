@@ -7,134 +7,64 @@
 <img width="865" height="427" alt="image" src="https://github.com/user-attachments/assets/4387c585-8eef-4c79-b0fd-69679bf4efb2" />
 
 
-**MANDARIN STUDY HUD • LOCAL TRANSLATION • TEXT-TO-SPEECH**
+**A companion overlay for studying Chinese while you watch, listen, and browse.**
 
 ---
 
-## What is this?
+## What is Meili?
 
-**Meili** is a transparent always-on-top overlay for studying Chinese. It can transcribe and translate spoken Chinese from desktop audio, and can also read on-screen subtitles from a shared window. Everything runs locally.
+Meili is a lightweight, transparent overlay that helps you follow Chinese in real time. Whether you’re watching a show, listening to dialogue, or reading on a webpage, Meili puts the characters, pinyin, word meanings, and an English translation right on your screen — so you can keep up without breaking your flow.
 
-## Features
+Everything runs on your own machine.
 
-### 1. Live mode (visual + audio, off by default)
-* Click **Live** to start the combined mode: it listens to desktop audio and watches on-screen subtitles.
-* Pick a window in the system portal dialog (PipeWire, like OBS), then drag a box on the overlay over the subtitles to mark the watched region.
-* When a new subtitle appears, the app reads and translates it immediately from the image; recognized speech retrofixes/corrects the matching subtitle when possible. Unrelated audio won’t replace the current visual subtitle.
-* Right-click the overlay to clear the region; toggle **Live** off to stop.
-* The **Trans** button toggles translation on/off (default on).
+## What you can do
 
-### 2. Study card
-* Each result shows hanzi, pinyin (`pypinyin`), a word breakdown from **CC-CEDICT**, and, when translation is on, the translation (local seq2seq model, default `facebook/nllb-200-distilled-600M`, configurable).
-* The card sits horizontally centered at the bottom of the overlay. The app draws the text with an outline so it stays readable over video.
+### Follow along with shows and videos
+Turn on **Live** mode, pick the window you’re watching, and drag a box over the subtitles. Meili reads the subtitles as they appear and translates them instantly, while also listening to the audio to catch and correct what’s being said. Click anywhere on the overlay background to play/pause your media.
 
-### 3. Selection translate
-* Select Chinese text anywhere on the desktop and the app runs it through the same pipeline: CJK filter → card → translation.
+### See more than just a translation
+For each line, Meili shows the Chinese text, pinyin, a breakdown of word meanings, and a translation — giving you the context to actually learn, not just read along.
 
-### 4. Hotkey
-* Press `Ctrl+Alt+S` to capture the screen. The app OCRs it and translates any Chinese found.
+### Translate anything on your desktop
+- **Select text** anywhere on your screen to translate it on the spot.
+- Press **Ctrl+Alt+S** to capture what’s on screen and translate any Chinese it finds.
 
-### 5. Text-to-Speech
-* **NeuTTS** (local neural TTS, optional, enabled in config).
-* **gTTS** fallback.
-* The app speaks the hanzi or the translation, in Chinese or English accordingly.
+### Hear it out loud
+Have Meili read the Chinese or the translation aloud to help with listening and pronunciation.
 
-### 6. Browser Extension (Chromium)
-* Select Chinese text on a page and the extension shows an in-page translation tooltip.
-* The extension talks to the local backend on `127.0.0.1:8263`.
-* The extension keeps page context **in memory only**. It writes nothing to disk.
+### Translate in your browser
+With the included browser extension, select Chinese text on any page to see an in-page translation.
 
-## Installation
+## Getting started
 
-### Prerequisites
-* Python 3.12+
-* Node.js (latest LTS, for the browser extension)
-* Tesseract OCR with `chi_sim` and `eng` traineddata (vendored in `data/tessdata/`)
-* PyGObject + GStreamer + the PipeWire GStreamer plugin (for the portal share on Wayland)
-* Chromium-based browser (for the extension)
+### Requirements
+- Linux (tested on Wayland), Python 3.12+, and Node.js (for the browser extension)
+- OCR language data for Chinese/English (included in this repo)
+- A Chromium-based browser for the optional extension
 
-### Setup
+### Install and run
 
 ```bash
-# System dependencies (Arch Linux)
+# Install system dependencies (Arch Linux)
 ./scripts/install_dependencies.sh
 
-# Python dependencies
+# Install Python dependencies
 make install-pip
 
-# Optional: NeuTTS
-make vendor
-
-# Browser extension
+# Build the browser extension (optional)
 make build-extension
 
-# Configuration
+# Create your local config
 cp config/example_config.yaml config/config.yaml
-```
 
-### Configuration
-
-Edit `config/config.yaml`:
-
-```yaml
-ocr:
-  engine: "pytesseract"
-  languages: ["en", "zh"]     # chi_sim does the hanzi work
-
-translation:
-  service: "nllb"
-  model: "facebook/nllb-200-distilled-600M"   # Chinese -> English (better quality)
-  target_language: "en"
-
-performance:
-  use_gpu: false
-  neutts_enabled: false   # needs vendor/neutts and src/assets/voice_ref.wav
-```
-
-`use_gpu: false` runs the translation model on the CPU.
-
-### Run
-
-```bash
+# Run Meili
 make run
 ```
 
-### Load Extension
+To use the browser extension, open `chrome://extensions`, enable Developer Mode, choose **Load unpacked**, and select `src/extension/dist`.
 
-1. Build it: `make build-extension`
-2. Open `chrome://extensions`, enable Developer Mode
-3. "Load unpacked" and select the extension build output (`src/extension/dist`)
-
----
-
-## Project Structure
-
-```
-Meili/
-├── src/
-│   ├── mesly/              # Python application
-│   │   ├── capture/        # Portal/PipeWire window streaming, screen capture
-│   │   ├── config/         # Settings and system specs
-│   │   ├── dictionary/     # CC-CEDICT lookup, pinyin, segmentation
-│   │   ├── ocr/            # Tesseract OCR + CJK-only filtering
-│   │   ├── server/         # FastAPI backend (extension endpoint)
-│   │   ├── translation/    # Local seq2seq translation service (NLLB/MarianMT)
-│   │   ├── tts/            # NeuTTS / gTTS speech synthesis
-│   │   ├── utils/          # Logging, hotkeys
-│   │   └── window/         # PyQt5 HUD overlay
-│   └── extension/           # Chromium extension (select-to-translate)
-├── data/                    # Vendored tessdata + CC-CEDICT
-├── config/                  # Runtime config
-├── vendor/                  # NeuTTS (optional)
-├── scripts/                 # Install scripts
-└── main.py                  # Entry point
-```
-
----
+> Meili works out of the box with the default settings. You can tweak behavior (like language, models, or GPU use) in `config/config.yaml` if you’d like.
 
 ## Contributing
 
-Contributions welcome. See `AGENTS.md` for development guidelines:
-- Import at top level
-- Separate modules into folders
-- Use classes in extensions
+Contributions are welcome — feel free to open an issue or pull request. See `AGENTS.md` for development notes.

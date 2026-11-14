@@ -31,14 +31,12 @@ class ConfigTemplate:
         """
         self.filepath = Path(filepath)
 
-        # Initialize with defaults
         self.ocr = OCRConfig()
         self.translation = TranslationConfig()
         self.capture = CaptureConfig()
         self.overlay = OverlayConfig()
         self.performance = PerformanceConfig()
 
-        # Load from file if exists, otherwise save defaults
         if self.filepath.exists():
             Logger.info(f"Loading configuration from {self.filepath}")
             self._load()
@@ -115,15 +113,12 @@ class ConfigTemplate:
         Returns:
             Ready-to-use ConfigTemplate instance
         """
-        # Normalize the filepath
         normalized_path = str(Path(filepath).resolve())
 
-        # Return existing instance if already loaded
         if normalized_path in cls._instances:
             Logger.debug(f"Using cached configuration from {filepath}")
             return cls._instances[normalized_path]
 
-        # Create new instance and cache it
         instance = cls(filepath)
         cls._instances[normalized_path] = instance
         return instance

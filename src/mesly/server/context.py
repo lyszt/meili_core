@@ -21,7 +21,6 @@ class BrowserContext:
     def push(self, url: str, title: str, body: str) -> None:
         soup = BeautifulSoup(body, "lxml")
 
-        # Remove non-readable elements
         for element in soup(['script', 'style', 'noscript', 'iframe', 'svg', 'path', 'nav', 'header', 'footer']):
             element.decompose()
 

@@ -26,7 +26,6 @@ from ..utils import Logger
 
 WORKER_PATH = Path(__file__).resolve().parent / "portal_worker.py"
 
-# How long to wait for the worker's READY line (picker interaction included)
 STARTUP_TIMEOUT_SECONDS = 150
 
 
@@ -47,9 +46,9 @@ class PortalCapture(QThread):
     The system shows a native window/screen picker; frames stream over a pipe.
     """
 
-    frame = pyqtSignal(object)  # PIL Image
+    frame = pyqtSignal(object)
     error = pyqtSignal(str)
-    status = pyqtSignal(str)    # progress updates for the UI
+    status = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -75,7 +74,6 @@ class PortalCapture(QThread):
             self.error.emit(f"Could not start the portal worker: {e}")
             return
 
-        # Drain stderr in the background so nobody deadlocks
         import threading
 
         def _drain_stderr():
@@ -123,7 +121,6 @@ class PortalCapture(QThread):
                 break
             buffer += chunk
 
-            # Extract protocol messages from the buffer
             while buffer:
                 if buffer.startswith(b"MESLYF"):
                     if len(buffer) < 10:
@@ -143,7 +140,6 @@ class PortalCapture(QThread):
                 elif buffer.startswith(b"MESLY "):
                     line_end = buffer.find(b"\n")
                     if line_end == -1:
-                        # drop overly long garbage
                         if len(buffer) > 4096:
                             buffer = b""
                         break
@@ -151,7 +147,6 @@ class PortalCapture(QThread):
                     buffer = buffer[line_end + 1:]
                     self._handle_worker_line(line)
                 else:
-                    # Unknown bytes: drop until the next protocol marker
                     index = buffer.find(b"MESLY")
                     buffer = buffer[index:] if index >= 0 else b""
         return frames

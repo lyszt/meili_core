@@ -31,13 +31,9 @@ from .shared import TranslationWorker, OcrWorker, capped_window_size
 BAR_WIDTH_FRACTION = 0.99
 BAR_HEIGHT = 690
 
-# Minimum drag size (pixels)
 MIN_REGION_SIZE = 24
-# Usable text width inside the study card
 CARD_TEXT_WIDTH = 640
-# Wrap target slightly inside the card so metric drift never reaches the edge
 WRAP_WIDTH = CARD_TEXT_WIDTH - 40
-# Watch poll interval (seconds)
 WATCH_INTERVAL = .5
 
 
@@ -266,17 +262,13 @@ class OutlineLabel(QLabel):
         painter.setFont(font)
         pen = QPen(QColor(0, 0, 0, 220))
         painter.setPen(pen)
-        # Text offset in 8 directions
         for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1),
                        (-1, -1), (1, -1), (-1, 1), (1, 1)):
             painter.drawText(rect.adjusted(dx, dy, dx, dy), align, text)
-        # Main fill
         painter.setPen(QPen(self.palette().color(self.foregroundRole())))
         painter.drawText(rect, align, text)
 
     def mousePressEvent(self, event):
-        # Clicking anywhere on the text drags the study card, so the
-        # whole surface is a grab area
         if event.button() == Qt.LeftButton:
             hud = self.window()
             card = getattr(hud, "card", None)
@@ -305,7 +297,6 @@ class HanziLabel(OutlineLabel):
             return
         fm = QFontMetrics(self.font())
         width = fm.horizontalAdvance(text)
-        # Center-aligned single line: hit-test the character under the tip
         left = (self.contentsRect().width() - width) // 2
         x = pos.x() - left
         if x < 0 or x >= width:
@@ -327,8 +318,6 @@ class HanziLabel(OutlineLabel):
             QToolTip.hideText()
             return
         _, dict_pinyin, glosses = entry
-        # CC-CEDICT stores tone numbers (shi4); pypinyin can render this
-        # single character with real tone marks instead
         pinyin = char_pinyin(ch) or dict_pinyin
         QToolTip.showText(global_pos,
                           f"{ch}  {pinyin}\n" + "\n".join(glosses[:4]))
@@ -351,6 +340,7 @@ class HUDWindow(QWidget):
         self._translation_workers = set()
         self.translation_enabled = True
         self.watch_enabled = False
+        self.updates_paused = False
         self.current_watch_hanzi = ""
         self.current_watch_time = 0.0
         self.last_frame = None
@@ -361,7 +351,6 @@ class HUDWindow(QWidget):
         self.audio_player.error.connect(self._on_audio_error)
         self.play_audio_signal.connect(self._play_audio_file)
 
-        # Frameless, always on top, no taskbar entry
         self.setWindowFlags(
             Qt.FramelessWindowHint
             | Qt.WindowStaysOnTopHint
@@ -372,12 +361,10 @@ class HUDWindow(QWidget):
         width, height = capped_window_size(1024, 720, 0.99, 0.95)
         self.resize(width, height)
 
-        # Controls on top, text block bottom-center, resize grip corner
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 16)
         layout.setSpacing(0)
 
-        # --- Top chrome: drag grip + status + window controls ---
         header = QWidget()
         header_row = QHBoxLayout(header)
         header_row.setContentsMargins(4, 0, 4, 0)
@@ -430,7 +417,6 @@ class HUDWindow(QWidget):
         self.size_grip = QSizeGrip(self)
         bottom_row.addWidget(self.size_grip)
 
-        # --- Study card: floating always-on-top window with the study text ---
         self.card = StudyCard(self, self)
         self.card.setMinimumSize(320, 70)
         card_layout = QVBoxLayout(self.card)
@@ -469,7 +455,6 @@ class HUDWindow(QWidget):
         self.dict_label.setAlignment(Qt.AlignHCenter)
         card_layout.addWidget(self.dict_label)
 
-        # Copy the hanzi for pasting into notes or a dictionary app
         copy_row = QHBoxLayout()
         copy_row.addStretch(1)
         self.btn_copy_hanzi = QPushButton("⧉")
@@ -480,9 +465,6 @@ class HUDWindow(QWidget):
         copy_row.addStretch(1)
         card_layout.addLayout(copy_row)
 
-        # Fixed text width with manual wrapping: labels can never push the
-        # card wider, and size hints stay exact (wordWrap hints size the
-        # card badly)
         for label in (self.hanzi_label, self.pinyin_label,
                       self.dict_label, self.translation_label):
             label.setFixedWidth(CARD_TEXT_WIDTH)
@@ -546,10 +528,6 @@ class HUDWindow(QWidget):
         self._selection_signals_seen = 0
         QApplication.clipboard().selectionChanged.connect(self._on_selection_changed)
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
     def showEvent(self, event):
         super().showEvent(event)
         if not self.isMaximized() and self._normal_geometry is None:
@@ -581,6 +559,13 @@ class HUDWindow(QWidget):
             self._asr_worker.stop()
             self._asr_worker = None
 
+    def _set_updates_paused(self, paused: bool):
+        self.updates_paused = paused
+        if paused:
+            self._watch_timer.stop()
+        elif self.watch_stream_rect is not None:
+            self._watch_timer.start(int(WATCH_INTERVAL * 1000))
+
     def _toggle_live(self, enabled: bool):
         """Toggle live mode (watch + listen + retrofix)."""
         if enabled:
@@ -598,7 +583,10 @@ class HUDWindow(QWidget):
                 return
             self._start_capture()
             self._set_mode_button_style(self.btn_live, True)
+            if self.updates_paused and self.watch_stream_rect is not None:
+                self._watch_timer.stop()
         else:
+            self._set_updates_paused(False)
             self._stop_listening()
             self.watch_enabled = False
             self._stop_capture_thread()
@@ -627,6 +615,7 @@ class HUDWindow(QWidget):
         if self.btn_live.isChecked():
             self.btn_live.setChecked(False)
             return
+        self._set_updates_paused(False)
         self._stop_listening()
         self.watch_enabled = False
         self._stop_capture_thread()
@@ -658,10 +647,6 @@ class HUDWindow(QWidget):
         self.shutdown()
         event.accept()
 
-    # ------------------------------------------------------------------
-    # Stream + OCR + translation pipeline
-    # ------------------------------------------------------------------
-
     def _on_stream_status(self, message):
         self.status_label.setText(message)
 
@@ -686,9 +671,6 @@ class HUDWindow(QWidget):
         self.pinyin_label.setText(
             wrap_to_width(char_pinyin(hanzi),
                           self.pinyin_label.fontMetrics(), WRAP_WIDTH))
-        # The dictionary line is omitted during subtitle watching: hover
-        # on any character gives its meaning, and the breakdown clutters
-        # a line you are reading in passing
         entries = self.cedict.breakdown(hanzi) if dictionary else []
         self.dict_label.setText(wrap_dictionary(entries))
         self._sync_card()
@@ -748,8 +730,6 @@ class HUDWindow(QWidget):
         self.status_label.setText("Copied")
 
     def _on_frame(self, image):
-        # Nothing auto-translates on frames; they only feed the picker
-        # and the watch region
         self.last_frame = image
 
     def _on_selection_changed(self):
@@ -807,11 +787,9 @@ class HUDWindow(QWidget):
         self.status_label.setText("Translation error")
         self._sync_card()
 
-    # ------------------------------------------------------------------
-    # Speech
-    # ------------------------------------------------------------------
-
     def _on_utterance(self, text):
+        if self.updates_paused:
+            return
         hanzi = cjk_only(text)
         if not hanzi:
             return
@@ -845,7 +823,6 @@ class HUDWindow(QWidget):
         self.speech.synthesize_async(text, callback=lambda audio: self._on_audio_ready(audio))
 
     def _on_audio_ready(self, audio):
-        # Runs on the TTS worker thread: only emit a signal, never touch widgets
         if not audio:
             self.play_audio_signal.emit("")
             return
@@ -880,18 +857,25 @@ class HUDWindow(QWidget):
             result = subprocess.run(
                 ["playerctl", "play-pause"],
                 capture_output=True, text=True, timeout=2)
-            if result.returncode == 0:
-                self.status_label.setText("Media toggled")
-            else:
+            if result.returncode != 0:
                 err = (result.stderr or result.stdout or "").strip()
                 self.status_label.setText(err or "Media toggle failed")
+                return
+            status = subprocess.run(
+                ["playerctl", "status"],
+                capture_output=True, text=True, timeout=2)
+            state = (status.stdout or "").strip().lower()
+            if "paused" in state:
+                self._set_updates_paused(True)
+                self.status_label.setText("Paused")
+            elif "playing" in state:
+                self._set_updates_paused(False)
+                self.status_label.setText("Playing")
+            else:
+                self.status_label.setText("Media toggled")
         except Exception as e:
             Logger.error(f"playerctl failed: {e}")
             self.status_label.setText("Media toggle failed")
-
-    # ------------------------------------------------------------------
-    # Window chrome: drag, maximize, restore
-    # ------------------------------------------------------------------
 
     def _toggle_maximize(self):
         if self.isMaximized():
@@ -928,10 +912,6 @@ class HUDWindow(QWidget):
 
     def _end_window_drag(self):
         self._drag_offset = None
-
-    # ------------------------------------------------------------------
-    # Watch region
-    # ------------------------------------------------------------------
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -996,7 +976,6 @@ class HUDWindow(QWidget):
         self.watch_stream_rect = QRect(
             round(rect.x() * sx), round(rect.y() * sy),
             round(rect.width() * sx), round(rect.height() * sy))
-        # Overlay-local rectangle
         self.watch_region = QRect(rect)
 
         self._watch_mark.setGeometry(self.watch_region.adjusted(-2, -2, 2, 2))
@@ -1082,6 +1061,8 @@ class HUDWindow(QWidget):
         """Periodic pass over the designated region: crop the latest
         stream frame, OCR it, and translate only when the Chinese
         content changed."""
+        if self.updates_paused:
+            return
         if self.watch_stream_rect is None or self.last_frame is None:
             return
         if self._region_ocr_worker is not None and self._region_ocr_worker.isRunning():
@@ -1090,8 +1071,6 @@ class HUDWindow(QWidget):
         rect = self.watch_stream_rect
         frame = self.last_frame
         fw, fh = frame.size
-        # Padding absorbs small mapping drift so glyph strokes at the box
-        # edge are not cut (cut strokes read as confidence-0 garbage)
         PAD = 8
         x0 = max(0, min(rect.x() - PAD, fw - 1))
         y0 = max(0, min(rect.y() - PAD, fh - 1))
@@ -1100,23 +1079,15 @@ class HUDWindow(QWidget):
         crop = frame.crop((x0, y0, x1, y1)).convert("L")
         region = np.asarray(crop)
 
-        # Subtitles are static between cuts: skip the whole OCR pass when
-        # the region pixels did not change since the last SUCCESSFUL read.
-        # Skipping on a failed read too would lock a miss in forever on
-        # static content, so empty results always retry.
         if (self._last_watch_region is not None and self._last_watch_ok
                 and np.array_equal(region, self._last_watch_region)):
             return
         self._last_watch_region = region
         self._last_watch_ok = False
-        # Small text needs bigger strokes for chi_sim: scale the crop so
-        # its height reaches ~100px, capped at 4x
         factor = max(1, min(4, -(-96 // crop.height)))
         if factor > 1:
             crop = crop.resize((crop.width * factor, crop.height * factor),
                                Image.LANCZOS)
-        # One-line strips read far better with "single line" page
-        # segmentation than tesseract's default full-page analysis
         psm = 7 if (y1 - y0) <= 60 else 6
 
         self.status_label.setText("Reading region…")
@@ -1125,9 +1096,9 @@ class HUDWindow(QWidget):
         self._region_ocr_worker.start()
 
     def _on_region_ocr_finished(self, text):
+        if self.updates_paused:
+            return
         hanzi = cjk_only(text) if text else ""
-        # Remember whether this read succeeded: the pixel-skip only
-        # engages after a successful OCR of the region
         self._last_watch_ok = bool(hanzi)
         if not hanzi:
             if self.watch_stream_rect is not None:

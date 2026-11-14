@@ -12,7 +12,6 @@ class GPUConfig:
         self.cuda_available = torch.cuda.is_available()
         self.gpu_compatible = False
 
-        # Suppress PyTorch CUDA warnings during detection
         warnings.filterwarnings('ignore', category=UserWarning, module='torch')
         warnings.filterwarnings('ignore', category=UserWarning, module='torch.cuda')
 
@@ -30,8 +29,6 @@ class GPUConfig:
                 gpu_name = torch.cuda.get_device_name(0)
                 gpu_capability = torch.cuda.get_device_capability(0)
 
-            # Check CUDA compute capability
-            # PyTorch current version supports sm_70+ (CUDA capability 7.0+)
             min_capability = (7, 0)
 
             if gpu_capability < min_capability:
@@ -39,14 +36,12 @@ class GPUConfig:
                     f"GPU '{gpu_name}' has CUDA capability {gpu_capability[0]}.{gpu_capability[1]}, "
                     f"but PyTorch requires minimum {min_capability[0]}.{min_capability[1]}"
                 )
-                # Force CPU mode only for incompatible GPU
                 os.environ['CUDA_VISIBLE_DEVICES'] = ''
                 self._set_cpu(
                     f"GPU incompatible (CUDA capability "
                     f"{gpu_capability[0]}.{gpu_capability[1]} < "
                     f"{min_capability[0]}.{min_capability[1]})")
             else:
-                # GPU is compatible - use it
                 self.device = torch.device("cuda:0")
                 self.device_name = gpu_name
                 self.gpu_compatible = True

@@ -32,15 +32,12 @@ class MeslyApp:
         print("Initializing Mesly...")
         self.config = ConfigTemplate.get_config()
 
-        # Detect system specs for feature gating (e.g. NeuTTS)
         self.specs = SystemSpecs()
         Logger.info(f"System specs: {self.specs.get_specs_summary()}")
 
-        # Setup hotkeys and screen capture
         self.hotkey_manager = HotkeyManager()
         self.screen_capture = ScreenCapture()
 
-        # Signal handler for thread-safe screenshot
         self.signals = HotkeySignals()
         self.signals.screenshot_requested.connect(self._capture_screenshot)
 
@@ -50,20 +47,13 @@ class MeslyApp:
         app.setApplicationName("Mesly")
         app.setStyle("Fusion")
 
-        # Ctrl+C / SIGTERM should quit the app gracefully. The default Python
-        # SIGINT handler can never run while Qt's C++ event loop owns the
-        # thread, so an unhandled KeyboardInterrupt stays pending and fires
-        # at interpreter shutdown (ugly traceback, abort exit code).
         signal.signal(signal.SIGINT, self._handle_quit_signal)
         signal.signal(signal.SIGTERM, self._handle_quit_signal)
 
-        # Yield to Python periodically so the signal handlers get a chance
-        # to actually run while the Qt event loop is active.
         self._signal_timer = QTimer()
         self._signal_timer.timeout.connect(lambda: None)
         self._signal_timer.start(200)
 
-        # Local services: OCR, translation (MarianMT zh->en) and speech (NeuTTS/gTTS)
         self.ocr_service = OcrService(self.config)
         self.translation_service = TranslationService(
             model_name=self.config.translation.model, config=self.config)
@@ -72,7 +62,6 @@ class MeslyApp:
         self.window = HUDWindow(self.translation_service, self.speech, self.ocr_service)
         self.window.show()
 
-        # Start hotkey listeners
         self.hotkey_manager.start()
         Logger.info("Hotkey listener started - Ctrl+Alt+S to screenshot")
 
@@ -85,7 +74,6 @@ class MeslyApp:
         self.server.start()
         Logger.info("FastAPI server started on http://127.0.0.1:8263")
 
-        # Cleanup on exit
         app.aboutToQuit.connect(self._cleanup)
 
         sys.exit(app.exec())
@@ -113,8 +101,6 @@ class MeslyApp:
             self.speech.close()
 
         Logger.info("Cleanup complete")
-        # Hard exit: native inference threads (whisper/ctranslate2)
-        # cannot be interrupted, and a polite exit can hang on them
         os._exit(0)
 
     def _register_hotkeys(self):
@@ -128,7 +114,6 @@ class MeslyApp:
     def _on_screenshot_hotkey(self):
         """Handle screenshot hotkey press (runs in hotkey thread)."""
         Logger.info("Screenshot hotkey pressed (Ctrl+Alt+S)")
-        # Emit signal to capture screenshot in main thread
         self.signals.screenshot_requested.emit()
 
     def _capture_screenshot(self):
@@ -140,27 +125,21 @@ class MeslyApp:
             if item.is_file():
                 item.unlink()
 
-        # Minimize window to avoid capturing it
         was_minimized = self.window.isMinimized()
         if not was_minimized:
             self.window.showMinimized()
 
-        # Small delay to let window minimize and X11 to settle
         QTimer.singleShot(100, self._do_capture)
 
     def _do_capture(self):
         """Actually perform the capture after delay."""
-        # Generate filepath with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filepath = f"data/screenshots/screenshot_{timestamp}.png"
 
-        # Create directory if needed
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
 
-        # Capture and save
         success = self.screen_capture.capture_and_save(filepath)
 
-        # Restore window
         self.window.showNormal()
 
         if not success:
@@ -170,7 +149,6 @@ class MeslyApp:
 
         Logger.info(f"Screenshot saved: {filepath}")
 
-        # Perform OCR on the screenshot
         try:
             Logger.info("Performing OCR on screenshot...")
             with Image.open(filepath) as img:
@@ -178,13 +156,11 @@ class MeslyApp:
 
             if ocr_text:
                 Logger.info(f"OCR extracted {len(ocr_text)} characters")
-                # Re-open for display (the previous handle is closed)
                 with Image.open(filepath) as preview_img:
                     self.window.show_ocr_text(ocr_text, image=preview_img)
             else:
                 Logger.warning("No text found in screenshot")
                 self.window.lbl_status.setText("No text detected in screenshot")
-                # Still show what was captured
                 with Image.open(filepath) as preview_img:
                     self.window._set_preview(preview_img)
         except Exception as e:

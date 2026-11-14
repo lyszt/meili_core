@@ -37,10 +37,8 @@ class Logger:
         if cls._initialized:
             return
 
-        # Remove default handler
         logger.remove()
 
-        # Console logging
         if console:
             logger.add(
                 sys.stdout,
@@ -52,7 +50,6 @@ class Logger:
                 colorize=True
             )
 
-        # File logging
         if log_file:
             log_path = Path(log_file)
             log_path.parent.mkdir(parents=True, exist_ok=True)

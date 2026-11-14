@@ -59,7 +59,6 @@ class SystemSpecs:
             self.ram_total_gb = vmem.total / (1024 ** 3)
             available_gb = vmem.available / (1024 ** 3)
             free_gb = vmem.free / (1024 ** 3)
-            # Conservative: if free is much lower than available, we're under pressure
             self.ram_available_gb = min(available_gb, free_gb + 2.0)
         except Exception as e:
             Logger.warning(f"Failed to detect RAM: {e}; assuming specs sufficient")

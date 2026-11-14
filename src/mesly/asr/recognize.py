@@ -9,7 +9,7 @@ import numpy as np
 from ..utils import Logger
 from ..utils.inference import inference_lock
 
-MODEL_NAME = "small"  # faster-whisper model size
+MODEL_NAME = "small"
 
 
 class AsrService:

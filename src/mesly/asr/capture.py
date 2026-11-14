@@ -13,7 +13,6 @@ import numpy as np
 from ..utils import Logger
 
 SAMPLE_RATE = 16000
-# 100 ms of s16le mono at 16 kHz
 CHUNK_BYTES = 3200
 
 
@@ -62,8 +61,6 @@ class MonitorCapture:
         while not self._closed:
             raw = proc.stdout.read(CHUNK_BYTES)
             if not raw:
-                # Empty read: parec died - surface its error instead of
-                # dying silently
                 if not self._closed and proc.stderr is not None:
                     error = proc.stderr.read().decode(errors="replace").strip()
                     if error:

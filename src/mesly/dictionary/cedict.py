@@ -15,7 +15,6 @@ DEFAULT_CEDICT = ROOT / "data" / "cedict" / "cedict_ts.u8"
 
 _LINE = re.compile(r"^(\S+) (\S+) \[([^\]]+)\] /(.+)/$")
 
-# Keep the by-word dictionary strips short
 MAX_WORDS_SHOWN = 5
 
 
@@ -42,7 +41,6 @@ class CEDict:
 
     def __init__(self, path: Path = DEFAULT_CEDICT):
         self.path = Path(path)
-        # simplified -> (traditional, pinyin, [meanings])
         self._entries: Dict[str, Tuple[str, str, List[str]]] = {}
         self._max_word_length = 0
         self.loaded = False
@@ -82,7 +80,6 @@ class CEDict:
         Characters not found in the dictionary are passed through as
         single-character tokens so nothing is silently dropped.
         """
-        # Strip non-CJK noise (digits, punctuation, spaces)
         cleaned = re.sub(r"[^\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+", "", text)
         words: List[str] = []
         index = 0
@@ -116,7 +113,6 @@ class CEDict:
                 if entry:
                     _traditional, _pinyin, glosses = entry
                     gloss = glosses[0] if glosses else ""
-                    # Keep the gloss short: first clause only
                     gloss = gloss.split(";")[0].strip()
                     results.append(f"{word}  {char_pinyin(word)}  {gloss}")
                 else:

@@ -17,7 +17,6 @@ from ..utils import Logger
 
 ROOT = Path(__file__).resolve().parents[3]
 
-# NeuTTS synthesizes 24kHz PCM
 NEUTTS_SAMPLE_RATE = 24000
 NEUTTS_REF_TEXT = "The quick brown fox jumps over the lazy dog."
 
@@ -103,7 +102,6 @@ class SpeechSynthesizer:
                 Logger.warning("Speech: audio synthesis returned empty waveform")
                 return None
 
-            # Convert float32 [-1, 1] to int16 PCM
             audio_int16 = (audio_array * 32767).astype(np.int16)
 
             byte_io = io.BytesIO()
@@ -117,8 +115,6 @@ class SpeechSynthesizer:
 
     def _synthesize_gtts(self, text: str) -> Optional[Tuple[str, bytes]]:
         try:
-            # Chinese-focused: speak hanzi with the Mandarin voice, anything
-            # else (e.g. English translations) falls back to English
             has_hanzi = any('\u4e00' <= ch <= '\u9fff' for ch in text)
             lang = "zh" if has_hanzi else "en"
             byte_io = io.BytesIO()

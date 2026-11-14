@@ -19,13 +19,10 @@ try:
 except Exception:
     _VAD_OPTIONS = None
 
-# Fallback energy gate when Silero VAD is unavailable
 RMS_GATE = 0.01
-# Silence that closes an utterance (seconds)
 SILENCE_CLOSE = 0.9
-# Minimum speech to bother transcribing (seconds)
 MIN_SPEECH = 0.3
-MAX_UTTERANCE = 5.0  # force-close long utterances for lower latency
+MAX_UTTERANCE = 5.0
 
 
 class AsrWorker(QThread):
@@ -41,9 +38,6 @@ class AsrWorker(QThread):
         self._executor = None
 
     def run(self):
-        # Transcription runs in its own pool so the capture loop keeps
-        # consuming audio while whisper works (otherwise audio drops and
-        # a quit mid-transcription hangs teardown)
         self._executor = ThreadPoolExecutor(max_workers=1,
                                             thread_name_prefix="asr-transcribe")
         self._buffer = np.empty(0, dtype=np.float32)

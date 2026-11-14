@@ -4,8 +4,6 @@ Translation configuration dataclass
 
 from dataclasses import dataclass
 
-# Default translation model. NLLB gives better zh->en quality for dialogue
-# than MarianMT opus-mt, at the cost of a larger download and more compute.
 DEFAULT_MODEL = "facebook/nllb-200-distilled-600M"
 
 

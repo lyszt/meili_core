@@ -9,7 +9,6 @@ from PIL import Image
 from typing import Optional
 from ..utils import Logger
 
-# Check for libraries
 try:
     import mss
     HAS_MSS = True
@@ -40,7 +39,7 @@ class ScreenCapture:
         """
         if self.sct:
             try:
-                monitor = self.sct.monitors[1]  # Primary monitor
+                monitor = self.sct.monitors[1]
                 sct_img = self.sct.grab(monitor)
                 img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
                 return np.array(img)
@@ -77,12 +76,10 @@ class ScreenCapture:
         desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").upper()
         temp_path = "/tmp/mesly_fullscreen_capture.png"
 
-        # Check which tools are available once
         has_spectacle = cmd_exists("spectacle")
         has_grim = cmd_exists("grim")
         has_gnome = cmd_exists("gnome-screenshot")
 
-        # Define potential commands based on DE and what's actually installed
         potential_cmds = []
 
         if "KDE" in desktop and has_spectacle:
@@ -92,13 +89,11 @@ class ScreenCapture:
         elif ("SWAY" in desktop or "HYPRLAND" in desktop) and has_grim:
             potential_cmds.append(["grim", temp_path])
 
-        # Universal fallbacks (try in order of preference, but skip gnome-screenshot if not on GNOME)
         if not potential_cmds:
             if has_spectacle:
                 potential_cmds.append(["spectacle", "-b", "-n", "-o", temp_path])
             if has_grim:
                 potential_cmds.append(["grim", temp_path])
-            # Only use gnome-screenshot as fallback if actually running GNOME
             if has_gnome and "GNOME" in desktop:
                 potential_cmds.append(["gnome-screenshot", "-f", temp_path])
 
@@ -108,11 +103,9 @@ class ScreenCapture:
 
         for cmd in potential_cmds:
             try:
-                # Cleanup old file
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
 
-                # Suppress GTK/GNOME warnings by setting environment
                 env = os.environ.copy()
                 env['G_MESSAGES_DEBUG'] = ''
 
@@ -129,7 +122,6 @@ class ScreenCapture:
                         img = img.convert("RGB")
                         img_array = np.array(img)
 
-                    # Cleanup
                     os.remove(temp_path)
                     Logger.debug(f"Captured with {cmd[0]}: {img_array.shape}")
                     return img_array
@@ -177,8 +169,6 @@ class ScreenCapture:
             except Exception as e:
                 Logger.debug(f"PyAutoGUI region capture failed: {e}")
 
-        # Full-screen capture cropped to the region (Spectacle on KDE
-        # Wayland has no non-interactive rectangle mode)
         full = self.capture_screen()
         if full is None:
             return None

@@ -13,10 +13,10 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 from ..utils import Logger
 
-DEFAULT_MODEL = "facebook/nllb-200-distilled-600M"  # better zh->en quality than MarianMT
+DEFAULT_MODEL = "facebook/nllb-200-distilled-600M"
 CACHE_TTL_SECONDS = 10
 MAX_MODEL_TOKENS = 512
-MAX_NEW_TOKENS = 48  # scaled with input in _generate()
+MAX_NEW_TOKENS = 48
 
 NLLB_SRC_LANG = "zho_Hans"
 NLLB_TGT_LANG = "eng_Latn"
@@ -41,8 +41,6 @@ class TranslationService:
     def _load_model(self) -> None:
         try:
             Logger.info(f"Loading translation model '{self.model_name}'...")
-            # transformers >= 5 removed the "translation" pipeline task, so
-            # load the seq2seq tokenizer/model directly (works on v4 and v5).
             if "nllb" in self.model_name.lower():
                 self.tokenizer = AutoTokenizer.from_pretrained(
                     self.model_name, src_lang=NLLB_SRC_LANG)
@@ -53,10 +51,6 @@ class TranslationService:
                 self._forced_bos_token_id = None
             self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name)
 
-            # GPU only when explicitly configured AND actually usable. On
-            # unsupported cards (e.g. compute capability < 7.0) device_map
-            # schemes either crash with mixed-device errors or run broken
-            # kernels, so the default is plain CPU.
             using_gpu = False
             if (self.config is not None
                     and getattr(self.config.performance, "use_gpu", False)):
@@ -99,7 +93,6 @@ class TranslationService:
         cache_key = f"{text[:100]}_{from_lang}_{to_lang}"
 
         with self._cache_lock:
-            # Drop expired cache entries
             self._cache = {
                 k: v for k, v in self._cache.items()
                 if current_time - v['timestamp'] < CACHE_TTL_SECONDS
@@ -148,7 +141,6 @@ class TranslationService:
 
     def _split_chunks(self, text: str) -> list:
         """Split text into chunks that each fit inside the model's token limit."""
-        # Prefer natural boundaries: paragraphs, then lines, then sentences
         pieces = []
         for para in text.split("\n"):
             if not para.strip():
@@ -196,7 +188,6 @@ class TranslationService:
             else:
                 if current:
                     result.append(current)
-                # A single sentence over the limit gets hard-split by tokens
                 if len(self.tokenizer.encode(piece, add_special_tokens=False)) > MAX_MODEL_TOKENS:
                     result.extend(self._split_tokens(piece))
                     current = ""
@@ -217,7 +208,6 @@ class TranslationService:
 
     def _generate(self, text: str) -> str:
         inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=MAX_MODEL_TOKENS)
-        # Guard against mixed devices (model on GPU, inputs on CPU)
         device = self.model.device
         inputs = {k: v.to(device) for k, v in inputs.items()}
         input_len = inputs["input_ids"].shape[1]

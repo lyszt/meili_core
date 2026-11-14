@@ -38,8 +38,6 @@ CURSOR_MODE_HIDDEN = 1
 RESPONSE_TIMEOUT_SECONDS = 120
 DBUS_CALL_TIMEOUT_MS = 30000
 
-# The streamer: runs in its own process with the fd inherited via
-# pass_fds - exactly like the standalone attempts that bind reliably.
 STREAMER_SOURCE = r'''
 import io
 import os
@@ -101,12 +99,7 @@ def on_sample(sink):
     if not ok:
         return Gst.FlowReturn.ERROR
     try:
-        # Single-plane RGB with row padding: the byte length of the buffer
-        # divided by the row count gives the padded stride (e.g. 1366px RGB
-        # is 4100 bytes/row, not 4098). Slice off the padding per row, then
-        # reshape to real pixels - otherwise the image comes out as a
-        # 4098-wide grayscale ghost and nothing downstream (preview aspect,
-        # OCR) works.
+        # Single-plane RGB may have row padding; derive stride from buffer size and strip padding per row.
         stride = len(mapinfo.data) // height
         raw = np.frombuffer(mapinfo.data, dtype=np.uint8)
         rows = raw.reshape(height, stride)[:, :width * 3]
@@ -252,7 +245,6 @@ def main():
         return 1
     sender = dbus.get_unique_name()[1:].replace(".", "_")
 
-    # 1. CreateSession
     code, results = wait_response(dbus, sender, lambda token: portal_call(
         dbus, "CreateSession", "(a{sv})", ({
             "handle_token": GLib.Variant("s", token),
@@ -264,7 +256,6 @@ def main():
         emit_line(f"MESLY ERR CreateSession rejected (code {code})")
         return 1
 
-    # 2. SelectSources
     code, _ = wait_response(dbus, sender, lambda token: portal_call(
         dbus, "SelectSources", "(oa{sv})", (session_path, {
             "handle_token": GLib.Variant("s", token),
@@ -277,7 +268,6 @@ def main():
         return 1
     emit_line("MESLY PICKER waiting for your selection")
 
-    # 3. Start (shows the picker dialog)
     code, results = wait_response(dbus, sender, lambda token: portal_call(
         dbus, "Start", "(osa{sv})", (session_path, "", {
             "handle_token": GLib.Variant("s", token),
@@ -287,8 +277,6 @@ def main():
         emit_line(f"MESLY ERR Start rejected or cancelled (code {code})")
         return 1
 
-    # KDE portal bug workaround (see OBS screencast-portal.c): only the LAST
-    # stream is the real one when more than one is attached.
     log(f"received {len(streams)} stream(s)")
     for index, entry in enumerate(streams):
         entry_props = dict(entry[1]) if len(entry) > 1 else {}
@@ -304,7 +292,6 @@ def main():
         return 1
     log(f"binding via target.object={serial} ({source})")
 
-    # 4. OpenPipeWireRemote
     try:
         result_variant, fd_list = dbus.call_with_unix_fd_list_sync(
             PORTAL_BUS_NAME, PORTAL_OBJECT_PATH, SCREENCAST_IFACE,
@@ -325,15 +312,13 @@ def main():
         emit_line(f"MESLY ERR portal fd unusable: {e}")
         return 1
 
-    # 5. Spawn the streamer with the fd inherited at exec time
     streamer_proc = subprocess.Popen(
         [sys.executable, "-c", STREAMER_SOURCE, str(fd), serial],
         pass_fds=(fd,),
         stdout=subprocess.PIPE,
-        stderr=None,  # streamer diagnostics go to our own stderr
+        stderr=None,
     )
 
-    # Relay the streamer's stdout to ours until it exits
     exited_cleanly = False
     while True:
         chunk = streamer_proc.stdout.read1(65536)

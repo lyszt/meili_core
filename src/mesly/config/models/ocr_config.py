@@ -9,7 +9,7 @@ from typing import List
 @dataclass
 class OCRConfig:
     """OCR engine configuration"""
-    engine: str = "pytesseract"  # pytesseract (the only wired engine)
+    engine: str = "pytesseract"
     languages: List[str] = field(default_factory=lambda: ["zh"])
     confidence_threshold: float = 0.5
     use_gpu: bool = False

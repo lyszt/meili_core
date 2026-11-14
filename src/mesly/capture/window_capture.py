@@ -12,9 +12,7 @@ from PIL import Image
 from ..utils import Logger
 from .screen_capture import ScreenCapture
 
-# wmctrl -lG keeps only visible, reasonably sized windows
 MIN_WINDOW_SIZE = 80
-# Never stream these (they are ours)
 OWN_TITLE_KEYWORDS = ("Mesly",)
 
 
@@ -55,7 +53,7 @@ class WindowLister:
                 continue
             wid, desktop = parts[0], parts[1]
             if desktop == "-1":
-                continue  # Skip docks/desktops
+                continue
             try:
                 x, y, w, h = int(parts[2]), int(parts[3]), int(parts[4]), int(parts[5])
             except ValueError:
@@ -144,8 +142,8 @@ class WindowCapture(QThread):
     follow a moving window.
     """
 
-    frame = pyqtSignal(object)  # PIL Image
-    lost = pyqtSignal()         # source box can no longer be resolved
+    frame = pyqtSignal(object)
+    lost = pyqtSignal()
 
     def __init__(self, get_box: Callable, fps: int = 10):
         super().__init__()
@@ -165,9 +163,6 @@ class WindowCapture(QThread):
 
             img_array = self.screen_capture.capture_region(box)
             if img_array is None:
-                # Region capture failed (e.g. Wayland): try the full chain
-                # (MSS -> PyAutoGUI -> Wayland CLI tools), which can still
-                # deliver fullscreen frames.
                 img_array = self.screen_capture.capture_screen()
 
             if img_array is not None:

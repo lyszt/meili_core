@@ -56,7 +56,6 @@ class Server:
 
         @self.app.post("/context")
         async def context(request: ContextRequest):
-            # In-memory only: nothing is stored to disk
             self.browser_context.push(request.url, request.title, request.html)
             return {"status": "context updated"}
 
@@ -76,7 +75,7 @@ class Server:
     def start(self):
         """Start the FastAPI server in a background thread."""
         if self._thread is not None and self._thread.is_alive():
-            return  # Already running
+            return
 
         def run_server():
             uvicorn.run(self.app, host=self.host, port=self.port, log_level="info")

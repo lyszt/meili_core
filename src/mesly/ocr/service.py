@@ -17,13 +17,8 @@ from ..utils.inference import inference_lock
 
 ROOT = Path(__file__).resolve().parents[3]
 
-# Words below this confidence are OCR noise and never reach the card.
-# Real subtitle text over video scores much lower than pristine text, so
-# this bar is deliberately permissive; the fallback below rescues text
-# that dips under it entirely.
 MIN_WORD_CONFIDENCE = 40.0
 
-# config language codes -> Tesseract language codes
 LANG_ALIASES = {
     "en": "eng",
     "zh": "chi_sim",
@@ -40,15 +35,13 @@ LANG_ALIASES = {
     "ru": "rus",
 }
 
-# Repo-local tessdata (downloaded language packs) takes priority over system
-# dirs, followed by common tessdata locations across distributions.
 TESSDATA_CANDIDATES = [
-    str(ROOT / "data" / "tessdata"),     # vendored in this repo
-    "/usr/share/tesseract/tessdata",     # Arch
-    "/usr/share/tessdata",               # Arch (alternate)
-    "/usr/share/tesseract-ocr/tessdata",  # Debian / Ubuntu
-    "/usr/share/tesseract-ocr/4.00/tessdata",  # Debian (older)
-    "/usr/local/share/tessdata",         # Manual installs
+    str(ROOT / "data" / "tessdata"),
+    "/usr/share/tesseract/tessdata",
+    "/usr/share/tessdata",
+    "/usr/share/tesseract-ocr/tessdata",
+    "/usr/share/tesseract-ocr/4.00/tessdata",
+    "/usr/local/share/tessdata",
 ]
 
 
@@ -88,7 +81,6 @@ class OcrService:
 
         for candidate in TESSDATA_CANDIDATES:
             if os.path.isdir(candidate):
-                # Only useful if it actually contains language files
                 if any(name.endswith(".traineddata") for name in os.listdir(candidate)):
                     os.environ["TESSDATA_PREFIX"] = candidate
                     Logger.info(f"OCR: using tessdata at {candidate}")
@@ -104,12 +96,10 @@ class OcrService:
     def _preprocess(self, image: Image) -> Image:
         """Preprocess image for subtitle OCR (grayscale, scale, contrast, threshold)."""
         gray = image if image.mode == "L" else image.convert("L")
-        # Upscale small crops so strokes are clearer for Tesseract.
         w, h = gray.size
         if h < 64:
             scale = max(2, min(4, -(-64 // max(1, h))))
             gray = gray.resize((w * scale, h * scale), Image.LANCZOS)
-        # Boost contrast then binarize with Otsu threshold.
         gray = ImageOps.autocontrast(gray, cutoff=1)
         arr = np.asarray(gray)
         if arr.size:
@@ -150,7 +140,6 @@ class OcrService:
             if self._rapidocr is not None:
                 try:
                     img = np.array(image.convert("RGB"))
-                    # RapidOCR expects BGR
                     img = img[:, :, ::-1]
                     result, _ = self._rapidocr(img)
                     if result:
@@ -167,7 +156,6 @@ class OcrService:
             if self._tessdata_dir:
                 try:
                     processed = self._preprocess(image)
-                    # Try LSTM engine with configured psm, then fallback PSMs.
                     psm_candidates = [psm] if psm else [7, 6]
                     seen = set()
                     psm_list = []
@@ -205,7 +193,6 @@ class OcrService:
                             words = [t.strip() for lvl, t in zip(data["level"], data["text"])
                                      if lvl == 5 and t.strip()]
                         candidate = " ".join(words)
-                        # Score: prefer more text with reasonable confidence.
                         valid_confs = [c for c in confidences if c >= 0]
                         avg_conf = (sum(valid_confs) / len(valid_confs)) if valid_confs else 0.0
                         score = len(candidate) + avg_conf / 100.0
@@ -213,7 +200,6 @@ class OcrService:
                             best_score = score
                             best_text = candidate
                             last_confs = confidences
-                        # Good enough result, avoid extra passes.
                         if len(candidate) >= 2 and avg_conf >= 45:
                             last_confs = confidences
                             best_text = candidate
