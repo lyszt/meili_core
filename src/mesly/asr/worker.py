@@ -25,10 +25,7 @@ RMS_GATE = 0.01
 SILENCE_CLOSE = 0.9
 # Minimum speech to bother transcribing (seconds)
 MIN_SPEECH = 0.3
-# Force-close long utterances (seconds): continuous dialogue never hits
-# the silence gate, and 20s monsters drowned the card, so keep the
-# whisper context small
-MAX_UTTERANCE = 8.0
+MAX_UTTERANCE = 5.0  # force-close long utterances for lower latency
 
 
 class AsrWorker(QThread):

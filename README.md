@@ -17,14 +17,15 @@
 
 ## Features
 
-### 1. Watch region (on-screen subtitles, off by default)
-* Click **Watch** to pick a window in the system portal dialog (PipeWire, like OBS).
-* Drag a box on the overlay over the subtitles to mark the watched region.
-* The app keeps watching that area of the shared window: it reads the Chinese there and updates the card only when a new line appears (no automatic translation for the watched line).
-* Right-click the overlay to clear the region; toggle **Watch** or press **Stop** to turn it off.
+### 1. Live mode (visual + audio, off by default)
+* Click **Live** to start the combined mode: it listens to desktop audio and watches on-screen subtitles.
+* Pick a window in the system portal dialog (PipeWire, like OBS), then drag a box on the overlay over the subtitles to mark the watched region.
+* When a new subtitle appears, the app reads and translates it immediately from the image; recognized speech retrofixes/corrects the matching subtitle when possible. Unrelated audio won’t replace the current visual subtitle.
+* Right-click the overlay to clear the region; toggle **Live** off to stop.
+* The **Trans** button toggles translation on/off (default on).
 
 ### 2. Study card
-* Each result shows hanzi, pinyin (`pypinyin`), a word breakdown from **CC-CEDICT**, and, when translation is on, the translation (local MarianMT, `Helsinki-NLP/opus-mt-zh-en`).
+* Each result shows hanzi, pinyin (`pypinyin`), a word breakdown from **CC-CEDICT**, and, when translation is on, the translation (local seq2seq model, default `facebook/nllb-200-distilled-600M`, configurable).
 * The card sits horizontally centered at the bottom of the overlay. The app draws the text with an outline so it stays readable over video.
 
 ### 3. Selection translate
@@ -38,12 +39,7 @@
 * **gTTS** fallback.
 * The app speaks the hanzi or the translation, in Chinese or English accordingly.
 
-### 6. Listening (audio translation)
-* Click **Listen** to transcribe the desktop audio with `faster-whisper`.
-* Each utterance is shown on the card and translated asynchronously (local MarianMT).
-* The **译** button toggles translation on/off (default on). The watched subtitle area stays untranslated.
-
-### 7. Browser Extension (Chromium)
+### 6. Browser Extension (Chromium)
 * Select Chinese text on a page and the extension shows an in-page translation tooltip.
 * The extension talks to the local backend on `127.0.0.1:8263`.
 * The extension keeps page context **in memory only**. It writes nothing to disk.
@@ -86,8 +82,8 @@ ocr:
   languages: ["en", "zh"]     # chi_sim does the hanzi work
 
 translation:
-  service: "helsinki-nlp"
-  model: "Helsinki-NLP/opus-mt-zh-en"   # Chinese -> English
+  service: "nllb"
+  model: "facebook/nllb-200-distilled-600M"   # Chinese -> English (better quality)
   target_language: "en"
 
 performance:
@@ -122,7 +118,7 @@ Meili/
 │   │   ├── dictionary/     # CC-CEDICT lookup, pinyin, segmentation
 │   │   ├── ocr/            # Tesseract OCR + CJK-only filtering
 │   │   ├── server/         # FastAPI backend (extension endpoint)
-│   │   ├── translation/    # Local MarianMT (opus-mt-zh-en) service
+│   │   ├── translation/    # Local seq2seq translation service (NLLB/MarianMT)
 │   │   ├── tts/            # NeuTTS / gTTS speech synthesis
 │   │   ├── utils/          # Logging, hotkeys
 │   │   └── window/         # PyQt5 HUD overlay

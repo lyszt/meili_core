@@ -5,10 +5,11 @@ then runs Tesseract on captured images.
 
 import os
 
+import numpy as np
 import pytesseract
 from pytesseract import Output
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageOps
 
 from ..config import ConfigTemplate
 from ..utils import Logger
@@ -58,6 +59,16 @@ class OcrService:
         self.config = config
         self.lang = self._resolve_langs()
         self._tessdata_dir = self._resolve_tessdata()
+        self._rapidocr = self._init_rapidocr()
+
+    def _init_rapidocr(self):
+        """Use RapidOCR when available (better for Chinese subtitles)."""
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+            Logger.info("OCR: using RapidOCR engine")
+            return RapidOCR()
+        except Exception:
+            return None
 
     def _resolve_langs(self) -> str:
         """Map config language codes to a Tesseract lang string (e.g. 'eng+chi_sim')."""
@@ -90,66 +101,131 @@ class OcrService:
         )
         return ""
 
+    def _preprocess(self, image: Image) -> Image:
+        """Preprocess image for subtitle OCR (grayscale, scale, contrast, threshold)."""
+        gray = image if image.mode == "L" else image.convert("L")
+        # Upscale small crops so strokes are clearer for Tesseract.
+        w, h = gray.size
+        if h < 64:
+            scale = max(2, min(4, -(-64 // max(1, h))))
+            gray = gray.resize((w * scale, h * scale), Image.LANCZOS)
+        # Boost contrast then binarize with Otsu threshold.
+        gray = ImageOps.autocontrast(gray, cutoff=1)
+        arr = np.asarray(gray)
+        if arr.size:
+            hist = np.bincount(arr.ravel(), minlength=256).astype(np.float64)
+            total = arr.size
+            sum_total = np.dot(np.arange(256), hist)
+            sum_b = 0.0
+            w_b = 0.0
+            max_var = 0.0
+            threshold = 127
+            for i in range(256):
+                w_b += hist[i]
+                if w_b == 0:
+                    continue
+                w_f = total - w_b
+                if w_f == 0:
+                    break
+                sum_b += i * hist[i]
+                m_b = sum_b / w_b
+                m_f = (sum_total - sum_b) / w_f
+                var_between = w_b * w_f * (m_b - m_f) ** 2
+                if var_between > max_var:
+                    max_var = var_between
+                    threshold = i
+            arr = np.where(arr > threshold, 255, 0).astype(np.uint8)
+            gray = Image.fromarray(arr, mode="L")
+        return gray
+
     def image_to_text(self, image: Image, psm: int = None) -> str:
         """
         OCR a PIL image using the configured languages.
 
-        The image is converted to grayscale first: tesseract runs measurably
-        faster on single-channel input with no accuracy loss for typical
-        screen content (subtitles, UI text). Falls back to a bare 'eng'
-        call if anything goes wrong, so a half-configured system still
-        returns whatever OCR it can. psm selects tesseract's page
-        segmentation mode (e.g. 7 = treat the image as a single line).
+        Prefers RapidOCR when installed (better for Chinese subtitles),
+        otherwise uses Tesseract with preprocessing and PSM fallbacks.
         """
-        tess_config = f"--psm {psm}" if psm else ""
+        base_config = f"--psm {psm}" if psm else ""
         with inference_lock:
+            if self._rapidocr is not None:
+                try:
+                    img = np.array(image.convert("RGB"))
+                    # RapidOCR expects BGR
+                    img = img[:, :, ::-1]
+                    result, _ = self._rapidocr(img)
+                    if result:
+                        texts = [str(item[1]).strip() for item in result if len(item) > 1 and str(item[1]).strip()]
+                        if texts:
+                            text = " ".join(texts)
+                            Logger.info(f"OCR (RapidOCR): '{text[:60]}'")
+                            return text
+                except Exception as e:
+                    Logger.warning(f"OCR: RapidOCR failed, falling back to Tesseract ({e})")
+
             if self._tessdata_dir:
                 try:
-                    grayscale = image if image.mode == "L" else image.convert("L")
-                    data = pytesseract.image_to_data(
-                        grayscale, lang=self.lang, config=tess_config,
-                        output_type=Output.DICT)
-                    # Word-level entries only: image_to_data also reports the
-                    # text at block/paragraph/line level, and keeping those
-                    # duplicates the input 4-5x ("we we we we" translations)
-                    words = []
-                    confidences = []
-                    for level, text, conf in zip(data["level"], data["text"],
-                                                 data["conf"]):
-                        if level != 5:
-                            continue
-                        text = text.strip()
-                        if not text:
-                            continue
-                        try:
-                            confidence = float(conf)
-                        except (TypeError, ValueError):
-                            confidence = -1.0
-                        confidences.append(confidence)
-                        if confidence >= MIN_WORD_CONFIDENCE:
-                            words.append(text)
-                    # The filter can be too harsh on hard video frames:
-                    # if it killed everything but words existed, fall back to
-                    # the unfiltered read so real text is never lost
-                    fallback = (not words and confidences
-                                and max(confidences) >= 0)
-                    if fallback:
+                    processed = self._preprocess(image)
+                    # Try LSTM engine with configured psm, then fallback PSMs.
+                    psm_candidates = [psm] if psm else [7, 6]
+                    seen = set()
+                    psm_list = []
+                    for p in psm_candidates + [7, 6, 11]:
+                        if p not in seen:
+                            seen.add(p)
+                            psm_list.append(p)
+                    best_text = ""
+                    best_score = -1.0
+                    last_confs = []
+                    for p in psm_list:
+                        tess_config = f"--oem 1 --psm {p}"
+                        data = pytesseract.image_to_data(
+                            processed, lang=self.lang, config=tess_config,
+                            output_type=Output.DICT)
                         words = []
+                        confidences = []
                         for level, text, conf in zip(data["level"], data["text"],
                                                      data["conf"]):
-                            if level == 5 and text.strip():
-                                words.append(text.strip())
-                    if confidences:
+                            if level != 5:
+                                continue
+                            text = text.strip()
+                            if not text:
+                                continue
+                            try:
+                                confidence = float(conf)
+                            except (TypeError, ValueError):
+                                confidence = -1.0
+                            confidences.append(confidence)
+                            if confidence >= MIN_WORD_CONFIDENCE:
+                                words.append(text)
+                        fallback = (not words and confidences
+                                    and max(confidences) >= 0)
+                        if fallback:
+                            words = [t.strip() for lvl, t in zip(data["level"], data["text"]) if lvl == 5 and t.strip()]
+                        candidate = " ".join(words)
+                        # Score: prefer more text with reasonable confidence.
+                        valid_confs = [c for c in confidences if c >= 0]
+                        avg_conf = (sum(valid_confs) / len(valid_confs)) if valid_confs else 0.0
+                        score = len(candidate) + avg_conf / 100.0
+                        if score > best_score:
+                            best_score = score
+                            best_text = candidate
+                            last_confs = confidences
+                        # Good enough result, avoid extra passes.
+                        if len(candidate) >= 2 and avg_conf >= 45:
+                            last_confs = confidences
+                            best_text = candidate
+                            break
+                    if last_confs:
                         Logger.info(
-                            f"OCR confidences: {['%.0f' % c for c in confidences]}"
-                            + (" (fallback)" if fallback else ""))
-                    return " ".join(words)
+                            f"OCR confidences: {['%.0f' % c for c in last_confs]}")
+                    return best_text
                 except Exception as e:
                     Logger.error(f"OCR failed with langs '{self.lang}': {e}")
 
             try:
-                grayscale = image if image.mode == "L" else image.convert("L")
-                return pytesseract.image_to_string(grayscale).strip()
+                processed = self._preprocess(image)
+                tess_config = base_config or "--oem 1 --psm 7"
+                return pytesseract.image_to_string(processed, config=tess_config).strip()
             except Exception as e:
                 Logger.error(f"OCR failed: {e}")
                 return ""

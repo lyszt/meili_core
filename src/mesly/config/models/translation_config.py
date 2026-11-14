@@ -4,9 +4,9 @@ Translation configuration dataclass
 
 from dataclasses import dataclass
 
-# Default is a dedicated Chinese->English model: smaller and higher quality
-# for Mandarin than the multi-language mul-en variant (change if needed).
-DEFAULT_MODEL = "Helsinki-NLP/opus-mt-zh-en"
+# Default translation model. NLLB gives better zh->en quality for dialogue
+# than MarianMT opus-mt, at the cost of a larger download and more compute.
+DEFAULT_MODEL = "facebook/nllb-200-distilled-600M"
 
 
 @dataclass

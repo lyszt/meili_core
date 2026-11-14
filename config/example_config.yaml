@@ -8,10 +8,10 @@ ocr:
     - "zh"
   confidence_threshold: 0.5
 
-# Translation Settings (local Helsinki-NLP MarianMT, zh -> en)
+# Translation Settings (local seq2seq model, zh -> en)
 translation:
-  service: "helsinki-nlp"
-  model: "Helsinki-NLP/opus-mt-zh-en"
+  service: "nllb"
+  model: "facebook/nllb-200-distilled-600M"
   source_language: "zh"
   target_language: "en"
   cache_enabled: true

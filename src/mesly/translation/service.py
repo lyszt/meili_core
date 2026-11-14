@@ -1,5 +1,5 @@
 """
-Translation service using local Helsinki-NLP (MarianMT) models.
+Translation service using local seq2seq translation models (NLLB, MarianMT, etc.).
 """
 
 import threading
@@ -14,18 +14,17 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from ..utils import Logger
 from ..utils.inference import inference_lock
 
-DEFAULT_MODEL = "Helsinki-NLP/opus-mt-zh-en"  # dedicated zh->en model
+DEFAULT_MODEL = "facebook/nllb-200-distilled-600M"  # better zh->en quality than MarianMT
 CACHE_TTL_SECONDS = 10
-# MarianMT's positional encoding limit
 MAX_MODEL_TOKENS = 512
-# Cap on generated tokens: subtitles/utterances are short, but fast speech
-# can pack more into one segment, so allow a bit of headroom while still
-# scaling with input to keep CPU inference quick.
-MAX_NEW_TOKENS = 48
+MAX_NEW_TOKENS = 48  # scaled with input in _generate()
+
+NLLB_SRC_LANG = "zho_Hans"
+NLLB_TGT_LANG = "eng_Latn"
 
 
 class TranslationService:
-    """Loads the local MarianMT model and translates text to English."""
+    """Loads a local seq2seq translation model and translates text to English."""
 
     def __init__(self, model_name: str = DEFAULT_MODEL, config=None):
         self.model_name = model_name
@@ -36,6 +35,7 @@ class TranslationService:
         self.load_error: Optional[str] = None
         self._cache: Dict[str, Dict] = {}
         self._cache_lock = threading.Lock()
+        self._forced_bos_token_id = None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="translation")
         self._executor.submit(self._load_model)
 
@@ -43,8 +43,15 @@ class TranslationService:
         try:
             Logger.info(f"Loading translation model '{self.model_name}'...")
             # transformers >= 5 removed the "translation" pipeline task, so
-            # load the MarianMT tokenizer/model directly (works on v4 and v5).
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            # load the seq2seq tokenizer/model directly (works on v4 and v5).
+            if "nllb" in self.model_name.lower():
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_name, src_lang=NLLB_SRC_LANG)
+                self._forced_bos_token_id = self.tokenizer.convert_tokens_to_ids(
+                    NLLB_TGT_LANG)
+            else:
+                self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+                self._forced_bos_token_id = None
             self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name)
 
             # GPU only when explicitly configured AND actually usable. On
@@ -62,8 +69,6 @@ class TranslationService:
                     Logger.warning("Translation: use_gpu set but CUDA unavailable; staying on CPU")
 
             if not using_gpu:
-                # Int8 dynamic quantization: roughly 2-3x faster MarianMT
-                # inference on CPU with negligible quality change
                 try:
                     self.model = torch.quantization.quantize_dynamic(
                         self.model, {nn.Linear}, dtype=torch.qint8)
@@ -218,11 +223,14 @@ class TranslationService:
         device = self.model.device
         inputs = {k: v.to(device) for k, v in inputs.items()}
         input_len = inputs["input_ids"].shape[1]
-        output = self.model.generate(
-            **inputs,
-            max_new_tokens=max(12, min(MAX_NEW_TOKENS, input_len + 16)),
-            num_beams=1,
-            do_sample=False)
+        generate_kwargs = {
+            "max_new_tokens": max(12, min(MAX_NEW_TOKENS, input_len + 16)),
+            "num_beams": 1,
+            "do_sample": False,
+        }
+        if self._forced_bos_token_id is not None:
+            generate_kwargs["forced_bos_token_id"] = self._forced_bos_token_id
+        output = self.model.generate(**inputs, **generate_kwargs)
         return self.tokenizer.decode(output[0], skip_special_tokens=True).strip()
 
     def close(self) -> None:

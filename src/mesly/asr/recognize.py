@@ -2,14 +2,14 @@
 Mandarin speech recognition over captured desktop audio (faster-whisper).
 """
 
+import os
+
 import numpy as np
 
 from ..utils import Logger
 from ..utils.inference import inference_lock
 
-# Whisper model size. "small" is a practical live default on CPU: much
-# faster than "medium" while keeping reasonable Mandarin accuracy.
-MODEL_NAME = "small"
+MODEL_NAME = "small"  # faster-whisper model size
 
 
 class AsrService:
@@ -25,10 +25,13 @@ class AsrService:
         if self.model is None:
             try:
                 from faster_whisper import WhisperModel
+                cpu_threads = max(1, os.cpu_count() or 1)
                 Logger.info(f"ASR: loading whisper '{MODEL_NAME}' "
-                            "(the first run downloads it)...")
+                            f"(cpu_threads={cpu_threads}, compute_type=int8, "
+                            "first run downloads it)...")
                 self.model = WhisperModel(
-                    MODEL_NAME, device="cpu", compute_type="int8")
+                    MODEL_NAME, device="cpu", compute_type="int8",
+                    cpu_threads=cpu_threads, num_workers=1)
                 Logger.info("ASR: model ready")
             except Exception as e:
                 self._load_failed = True
@@ -44,7 +47,8 @@ class AsrService:
             with inference_lock:
                 segments, _info = self.model.transcribe(
                     audio, language="zh", vad_filter=False, beam_size=1,
-                    condition_on_previous_text=False)
+                    best_of=1, temperature=0.0,
+                    condition_on_previous_text=False, without_timestamps=True)
             texts = [s.text.strip() for s in segments if s.text.strip()]
             return "".join(texts)
         except Exception as e:
