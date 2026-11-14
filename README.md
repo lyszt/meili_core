@@ -15,18 +15,18 @@
 
 ## What is this?
 
-**Meili** is a transparent always-on-top overlay that translates Chinese from a screen share. It shares a window through the desktop portal (PipeWire, the same mechanism OBS uses), OCRs a region of the stream you mark once, and shows the hanzi with pinyin, a word-by-word dictionary breakdown, and a translation. Everything runs locally.
+**Meili** is a transparent always-on-top overlay for studying Chinese. It can transcribe and translate spoken Chinese from desktop audio, and can also read on-screen subtitles from a shared window. Everything runs locally.
 
 ## Features
 
-### 1. Watch region
-* On startup, you pick the window to share in the system dialog.
-* Click the overlay to open a frozen frame of the stream, then draw a box over it to set the watched region (right-click or Esc cancels).
-* The app keeps watching that area of the shared window: every 3 seconds it reads the Chinese there and translates it only when a new line appears.
-* Right-click the overlay to clear the region.
+### 1. Watch region (on-screen subtitles, off by default)
+* Click **Watch** to pick a window in the system portal dialog (PipeWire, like OBS).
+* Drag a box on the overlay over the subtitles to mark the watched region.
+* The app keeps watching that area of the shared window: it reads the Chinese there and updates the card only when a new line appears (no automatic translation for the watched line).
+* Right-click the overlay to clear the region; toggle **Watch** or press **Stop** to turn it off.
 
 ### 2. Study card
-* Each result shows hanzi, pinyin (`pypinyin`), a word breakdown from **CC-CEDICT**, and the translation (local MarianMT, `Helsinki-NLP/opus-mt-zh-en`).
+* Each result shows hanzi, pinyin (`pypinyin`), a word breakdown from **CC-CEDICT**, and, when translation is on, the translation (local MarianMT, `Helsinki-NLP/opus-mt-zh-en`).
 * The card sits horizontally centered at the bottom of the overlay. The app draws the text with an outline so it stays readable over video.
 
 ### 3. Selection translate
@@ -40,7 +40,12 @@
 * **gTTS** fallback.
 * The app speaks the hanzi or the translation, in Chinese or English accordingly.
 
-### 6. Browser Extension (Chromium)
+### 6. Listening (audio translation)
+* Click **Listen** to transcribe the desktop audio with `faster-whisper`.
+* Each utterance is shown on the card and translated asynchronously (local MarianMT).
+* The **译** button toggles translation on/off (default on). The watched subtitle area stays untranslated.
+
+### 7. Browser Extension (Chromium)
 * Select Chinese text on a page and the extension shows an in-page translation tooltip.
 * The extension talks to the local backend on `127.0.0.1:8263`.
 * The extension keeps page context **in memory only**. It writes nothing to disk.

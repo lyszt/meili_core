@@ -2,6 +2,7 @@
 Translation service using local Helsinki-NLP (MarianMT) models.
 """
 
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Optional
@@ -11,14 +12,16 @@ from torch import nn
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 from ..utils import Logger
+from ..utils.inference import inference_lock
 
 DEFAULT_MODEL = "Helsinki-NLP/opus-mt-zh-en"  # dedicated zh->en model
 CACHE_TTL_SECONDS = 10
 # MarianMT's positional encoding limit
 MAX_MODEL_TOKENS = 512
-# Cap on generated tokens: subtitles are short, and an uncapped generate
-# can burn whole seconds on the CPU. Scale with the input, never below 16.
-MAX_NEW_TOKENS = 64
+# Cap on generated tokens: subtitles/utterances are short, so a tight cap
+# keeps CPU inference fast. Scale with the input instead of generating
+# up to a large fixed maximum.
+MAX_NEW_TOKENS = 32
 
 
 class TranslationService:
@@ -32,6 +35,7 @@ class TranslationService:
         self.loading = True
         self.load_error: Optional[str] = None
         self._cache: Dict[str, Dict] = {}
+        self._cache_lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="translation")
         self._executor.submit(self._load_model)
 
@@ -88,22 +92,23 @@ class TranslationService:
             to_lang: Target language (model outputs English)
         """
         current_time = time.time()
-
-        # Drop expired cache entries
-        self._cache = {
-            k: v for k, v in self._cache.items()
-            if current_time - v['timestamp'] < CACHE_TTL_SECONDS
-        }
-
         cache_key = f"{text[:100]}_{from_lang}_{to_lang}"
-        if cache_key in self._cache:
-            Logger.debug(f"Returning cached translation for: '{text[:50]}...'")
-            return {
-                "translation": self._cache[cache_key]['translation'],
-                "from": from_lang,
-                "to": to_lang,
-                "cached": True
+
+        with self._cache_lock:
+            # Drop expired cache entries
+            self._cache = {
+                k: v for k, v in self._cache.items()
+                if current_time - v['timestamp'] < CACHE_TTL_SECONDS
             }
+            if cache_key in self._cache:
+                Logger.debug(f"Returning cached translation for: '{text[:50]}...'")
+                cached = self._cache[cache_key]['translation']
+                return {
+                    "translation": cached,
+                    "from": from_lang,
+                    "to": to_lang,
+                    "cached": True
+                }
 
         if self.loading:
             return {"translation": "[Translation model is still loading... Please wait]", "error": "Model loading"}
@@ -113,9 +118,11 @@ class TranslationService:
 
         try:
             t0 = time.perf_counter()
-            translation = self._translate_chunks(text)
+            with inference_lock:
+                translation = self._translate_chunks(text)
             elapsed = time.perf_counter() - t0
-            self._cache[cache_key] = {"translation": translation, "timestamp": current_time}
+            with self._cache_lock:
+                self._cache[cache_key] = {"translation": translation, "timestamp": time.time()}
             Logger.info(f"Translation ({elapsed:.2f}s): "
                         f"'{text[:50]}...' -> '{translation[:50]}...'")
             return {"translation": translation, "from": from_lang, "to": to_lang}
@@ -213,7 +220,9 @@ class TranslationService:
         input_len = inputs["input_ids"].shape[1]
         output = self.model.generate(
             **inputs,
-            max_new_tokens=max(16, min(MAX_NEW_TOKENS, 2 * input_len)))
+            max_new_tokens=max(8, min(MAX_NEW_TOKENS, input_len + 8)),
+            num_beams=1,
+            do_sample=False)
         return self.tokenizer.decode(output[0], skip_special_tokens=True).strip()
 
     def close(self) -> None:

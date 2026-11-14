@@ -12,6 +12,7 @@ from PIL import Image
 
 from ..config import ConfigTemplate
 from ..utils import Logger
+from ..utils.inference import inference_lock
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -101,53 +102,54 @@ class OcrService:
         segmentation mode (e.g. 7 = treat the image as a single line).
         """
         tess_config = f"--psm {psm}" if psm else ""
-        if self._tessdata_dir:
-            try:
-                grayscale = image if image.mode == "L" else image.convert("L")
-                data = pytesseract.image_to_data(
-                    grayscale, lang=self.lang, config=tess_config,
-                    output_type=Output.DICT)
-                # Word-level entries only: image_to_data also reports the
-                # text at block/paragraph/line level, and keeping those
-                # duplicates the input 4-5x ("we we we we" translations)
-                words = []
-                confidences = []
-                for level, text, conf in zip(data["level"], data["text"],
-                                             data["conf"]):
-                    if level != 5:
-                        continue
-                    text = text.strip()
-                    if not text:
-                        continue
-                    try:
-                        confidence = float(conf)
-                    except (TypeError, ValueError):
-                        confidence = -1.0
-                    confidences.append(confidence)
-                    if confidence >= MIN_WORD_CONFIDENCE:
-                        words.append(text)
-                # The filter can be too harsh on hard video frames:
-                # if it killed everything but words existed, fall back to
-                # the unfiltered read so real text is never lost
-                fallback = (not words and confidences
-                            and max(confidences) >= 0)
-                if fallback:
+        with inference_lock:
+            if self._tessdata_dir:
+                try:
+                    grayscale = image if image.mode == "L" else image.convert("L")
+                    data = pytesseract.image_to_data(
+                        grayscale, lang=self.lang, config=tess_config,
+                        output_type=Output.DICT)
+                    # Word-level entries only: image_to_data also reports the
+                    # text at block/paragraph/line level, and keeping those
+                    # duplicates the input 4-5x ("we we we we" translations)
                     words = []
+                    confidences = []
                     for level, text, conf in zip(data["level"], data["text"],
                                                  data["conf"]):
-                        if level == 5 and text.strip():
-                            words.append(text.strip())
-                if confidences:
-                    Logger.info(
-                        f"OCR confidences: {['%.0f' % c for c in confidences]}"
-                        + (" (fallback)" if fallback else ""))
-                return " ".join(words)
-            except Exception as e:
-                Logger.error(f"OCR failed with langs '{self.lang}': {e}")
+                        if level != 5:
+                            continue
+                        text = text.strip()
+                        if not text:
+                            continue
+                        try:
+                            confidence = float(conf)
+                        except (TypeError, ValueError):
+                            confidence = -1.0
+                        confidences.append(confidence)
+                        if confidence >= MIN_WORD_CONFIDENCE:
+                            words.append(text)
+                    # The filter can be too harsh on hard video frames:
+                    # if it killed everything but words existed, fall back to
+                    # the unfiltered read so real text is never lost
+                    fallback = (not words and confidences
+                                and max(confidences) >= 0)
+                    if fallback:
+                        words = []
+                        for level, text, conf in zip(data["level"], data["text"],
+                                                     data["conf"]):
+                            if level == 5 and text.strip():
+                                words.append(text.strip())
+                    if confidences:
+                        Logger.info(
+                            f"OCR confidences: {['%.0f' % c for c in confidences]}"
+                            + (" (fallback)" if fallback else ""))
+                    return " ".join(words)
+                except Exception as e:
+                    Logger.error(f"OCR failed with langs '{self.lang}': {e}")
 
-        try:
-            grayscale = image if image.mode == "L" else image.convert("L")
-            return pytesseract.image_to_string(grayscale).strip()
-        except Exception as e:
-            Logger.error(f"OCR failed: {e}")
-            return ""
+            try:
+                grayscale = image if image.mode == "L" else image.convert("L")
+                return pytesseract.image_to_string(grayscale).strip()
+            except Exception as e:
+                Logger.error(f"OCR failed: {e}")
+                return ""

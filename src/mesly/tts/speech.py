@@ -14,6 +14,7 @@ from scipy.io.wavfile import write
 
 from ..config import ConfigTemplate, SystemSpecs
 from ..utils import Logger
+from ..utils.inference import inference_lock
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -94,11 +95,12 @@ class SpeechSynthesizer:
                 Logger.warning(f"Speech: reference audio not found at {ref_audio_path}")
                 return None
 
-            if self._ref_codes is None:
-                Logger.info(f"Speech: encoding reference audio from {ref_audio_path}")
-                self._ref_codes = self.engine.encode_reference(str(ref_audio_path))
+            with inference_lock:
+                if self._ref_codes is None:
+                    Logger.info(f"Speech: encoding reference audio from {ref_audio_path}")
+                    self._ref_codes = self.engine.encode_reference(str(ref_audio_path))
 
-            audio_array = self.engine.infer(text, self._ref_codes, NEUTTS_REF_TEXT)
+                audio_array = self.engine.infer(text, self._ref_codes, NEUTTS_REF_TEXT)
             if audio_array is None or len(audio_array) == 0:
                 Logger.warning("Speech: audio synthesis returned empty waveform")
                 return None

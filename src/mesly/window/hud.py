@@ -1,9 +1,10 @@
 """
-HUD overlay: transparent always-on-top translation layer.
+HUD overlay: transparent always-on-top study layer.
 
 On startup it prompts the system window picker once, then the user marks
-a watch region on the stream and new Chinese there is OCRed and displayed
-with its translation.
+a watch region on the stream and new Chinese there is OCRed and displayed.
+Spoken Chinese from the desktop audio is transcribed and, while the
+translation toggle is on, translated asynchronously.
 """
 
 import os
@@ -350,7 +351,9 @@ class HUDWindow(QWidget):
         self.ocr_service = ocr_service
 
         self.capture_thread = None
-        self.translation_worker = None
+        self._translation_workers = set()
+        self.translation_enabled = True
+        self.watch_enabled = False
         self.last_frame = None
         self.last_hanzi = ""
         self.last_translation = ""
@@ -385,9 +388,20 @@ class HUDWindow(QWidget):
         self.drag_grip.setObjectName("hud_grip")
         header_row.addWidget(self.drag_grip)
 
-        self.status_label = QLabel("Pick the window to share, then drag on the overlay to mark the subtitles")
+        self.status_label = QLabel("Ready")
         self.status_label.setObjectName("hud_status")
         header_row.addWidget(self.status_label, 1)
+        self.btn_watch = QPushButton("Watch")
+        self.btn_watch.setCheckable(True)
+        self.btn_watch.setChecked(self.watch_enabled)
+        self.btn_watch.setToolTip(
+            "Watch on-screen subtitles: pick a window, then drag a box over the text")
+        self.btn_watch.toggled.connect(self._toggle_watch)
+        self.btn_translate = QPushButton("译")
+        self.btn_translate.setCheckable(True)
+        self.btn_translate.setChecked(self.translation_enabled)
+        self.btn_translate.setToolTip("Translate the spoken Chinese (on/off)")
+        self.btn_translate.toggled.connect(self._toggle_translation)
         self.btn_speak_hanzi = QPushButton("Say")
         self.btn_speak_hanzi.setToolTip("Speak the captured Chinese")
         self.btn_speak_hanzi.clicked.connect(lambda: self.speak_text("hanzi"))
@@ -407,9 +421,9 @@ class HUDWindow(QWidget):
         self.btn_quit = QPushButton("×")
         self.btn_quit.setToolTip("Quit")
         self.btn_quit.clicked.connect(self._quit)
-        for button in (self.btn_speak_hanzi, self.btn_speak_translation,
-                       self.btn_listen, self.btn_stop, self.btn_max,
-                       self.btn_quit):
+        for button in (self.btn_watch, self.btn_translate, self.btn_speak_hanzi,
+                       self.btn_speak_translation, self.btn_listen,
+                       self.btn_stop, self.btn_max, self.btn_quit):
             header_row.addWidget(button)
         layout.addWidget(header)
         self.header = header
@@ -443,7 +457,7 @@ class HUDWindow(QWidget):
         self.hanzi_label = HanziLabel(self)
         self.hanzi_label.setObjectName("hud_hanzi")
         self.hanzi_label.setAlignment(Qt.AlignHCenter)
-        self.hanzi_label.setText("Drag a box over the subtitles")
+        self.hanzi_label.setText("")
         card_layout.addWidget(self.hanzi_label)
 
         self.translation_label = OutlineLabel("")
@@ -541,10 +555,26 @@ class HUDWindow(QWidget):
         if not self.isMaximized() and self._normal_geometry is None:
             self.showMaximized()
         self._sync_card()
-        if not portal_available():
-            self.status_label.setText("Portal unavailable (install python-gobject, gst-plugin-pipewire)")
-            return
-        self._start_capture()
+
+    def _toggle_watch(self, enabled: bool):
+        """Turn screen-subtitle watching on/off. Off by default: enabling
+        starts the portal picker and lets you mark a region to OCR."""
+        self.watch_enabled = enabled
+        if enabled:
+            if not portal_available():
+                self.status_label.setText(
+                    "Portal unavailable (install python-gobject, gst-plugin-pipewire)")
+                self.btn_watch.blockSignals(True)
+                self.btn_watch.setChecked(False)
+                self.btn_watch.blockSignals(False)
+                self.watch_enabled = False
+                return
+            self._start_capture()
+        else:
+            self._stop_capture_thread()
+            self._clear_watch_region(silent=True)
+            self.last_frame = None
+            self.status_label.setText("Watch off")
 
     def _start_capture(self):
         if self.capture_thread is not None:
@@ -555,12 +585,22 @@ class HUDWindow(QWidget):
         self.capture_thread.status.connect(self._on_stream_status)
         self.capture_thread.start()
 
-    def stop_stream(self):
+    def _stop_capture_thread(self):
         if self.capture_thread:
             self.capture_thread.stop()
             self.capture_thread.wait(3000)
             self.capture_thread = None
-        self.status_label.setText("Stopped")
+
+    def stop_stream(self):
+        """Stop watching subtitles and tear down the screen capture."""
+        if self.btn_watch.isChecked():
+            self.btn_watch.setChecked(False)
+            return
+        self.watch_enabled = False
+        self._stop_capture_thread()
+        self._clear_watch_region(silent=True)
+        self.last_frame = None
+        self.status_label.setText("Watch off")
 
     def shutdown(self):
         """Stop every thread before exit: a QThread destroyed while
@@ -571,8 +611,10 @@ class HUDWindow(QWidget):
             self._asr_worker = None
         if self._region_ocr_worker is not None and self._region_ocr_worker.isRunning():
             self._region_ocr_worker.wait(5000)
-        if self.translation_worker is not None and self.translation_worker.isRunning():
-            self.translation_worker.wait(5000)
+        for worker in list(self._translation_workers):
+            if worker.isRunning():
+                worker.wait(5000)
+        self._translation_workers.clear()
         self.stop_stream()
 
     def _quit(self):
@@ -591,7 +633,14 @@ class HUDWindow(QWidget):
         self.status_label.setText(message)
 
     def _on_stream_error(self, message):
-        self.hanzi_label.setText("Stream stopped")
+        self.watch_enabled = False
+        if self.btn_watch.isChecked():
+            self.btn_watch.blockSignals(True)
+            self.btn_watch.setChecked(False)
+            self.btn_watch.blockSignals(False)
+        self._stop_capture_thread()
+        self._clear_watch_region(silent=True)
+        self.last_frame = None
         self.status_label.setText(message)
 
     def _display_hanzi(self, hanzi: str, dictionary: bool = True):
@@ -609,14 +658,34 @@ class HUDWindow(QWidget):
         self.dict_label.setText(wrap_dictionary(entries))
         self._sync_card()
 
+    def _toggle_translation(self, enabled: bool):
+        """Turn automatic translation on/off. Re-translates the current
+        hanzi when switched back on so the card is never stale."""
+        self.translation_enabled = enabled
+        if enabled:
+            if self.last_hanzi:
+                self._start_translation(self.last_hanzi)
+        else:
+            self.translation_label.hide()
+            self._sync_card()
+        self.status_label.setText("Translation on" if enabled else "Translation off")
+
     def _start_translation(self, hanzi: str):
-        if self.translation_worker is not None and self.translation_worker.isRunning():
+        """Translate asynchronously. Each request runs in its own worker so
+        a slow translation never blocks newer ones; stale results are
+        dropped when they finish."""
+        if not self.translation_enabled:
+            self.translation_label.hide()
             return
+        self.translation_label.show()
         self.translation_label.setText("…")
-        self.translation_worker = TranslationWorker(self.translation_service, hanzi)
-        self.translation_worker.finished.connect(self._on_translation)
-        self.translation_worker.error.connect(self._on_translation_error)
-        self.translation_worker.start()
+        worker = TranslationWorker(self.translation_service, hanzi)
+        self._translation_workers.add(worker)
+        worker.finished.connect(lambda result, w=worker: self._on_translation(w, result))
+        worker.error.connect(lambda message, w=worker: self._on_translation_error(w, message))
+        worker.finished.connect(lambda _=None, w=worker: self._translation_workers.discard(w))
+        worker.error.connect(lambda _=None, w=worker: self._translation_workers.discard(w))
+        worker.start()
 
     def show_ocr_text(self, ocr_text, image=None, translate=True,
                       dictionary=True):
@@ -681,9 +750,15 @@ class HUDWindow(QWidget):
         self.status_label.setText("Translating selection…")
         self._start_translation(hanzi)
 
-    def _on_translation(self, result):
+    def _on_translation(self, worker, result):
+        # Multiple translations may run in parallel; only show the result
+        # for the text currently on screen so a slow, older one can't
+        # overwrite a newer translation.
+        if not self.translation_enabled or worker.text != self.last_hanzi:
+            return
         translation = result.get("translation", "")
         self.last_translation = translation
+        self.translation_label.show()
         self.translation_label.setText(
             wrap_to_width(translation,
                           self.translation_label.fontMetrics(),
@@ -691,7 +766,10 @@ class HUDWindow(QWidget):
         self.status_label.setText("Translated")
         self._sync_card()
 
-    def _on_translation_error(self, message):
+    def _on_translation_error(self, worker, message):
+        if not self.translation_enabled or worker.text != self.last_hanzi:
+            return
+        self.translation_label.show()
         self.translation_label.setText(
             wrap_to_width(f"(translation failed: {message})",
                           self.translation_label.fontMetrics(),
@@ -723,6 +801,7 @@ class HUDWindow(QWidget):
             return
         self.last_hanzi = hanzi
         self._display_hanzi(hanzi, dictionary=True)
+        self._start_translation(hanzi)
         self.status_label.setText("Heard")
 
     def speak_text(self, which):
@@ -805,9 +884,10 @@ class HUDWindow(QWidget):
     # ------------------------------------------------------------------
 
     def mousePressEvent(self, event):
-        # Left drag draws the watch region right over the live video:
-        # nothing is shown or frozen, only a thin rubber band.
-        if event.button() == Qt.LeftButton and self._rubber_origin is None:
+        # Left drag draws the watch region right over the live video,
+        # but only when watch mode is enabled.
+        if (self.watch_enabled and event.button() == Qt.LeftButton
+                and self._rubber_origin is None):
             self._rubber_origin = event.pos()
             self._rubber_band.setGeometry(QRect(self._rubber_origin, QSize()))
             self._rubber_band.show()
@@ -873,15 +953,16 @@ class HUDWindow(QWidget):
         self._watch_timer.start(int(WATCH_INTERVAL * 1000))
         self._watch_tick()
 
-    def _clear_watch_region(self):
+    def _clear_watch_region(self, silent: bool = False):
         self.watch_stream_rect = None
         self.watch_region = None
         self._last_watch_region = None
         self._last_watch_ok = False
         self._watch_mark.hide()
         self._watch_timer.stop()
-        self.status_label.setText("Watch cleared")
-        Logger.info("HUD: watch region cleared")
+        if not silent:
+            self.status_label.setText("Watch cleared")
+            Logger.info("HUD: watch region cleared")
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
