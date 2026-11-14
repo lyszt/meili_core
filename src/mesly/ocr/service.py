@@ -154,7 +154,8 @@ class OcrService:
                     img = img[:, :, ::-1]
                     result, _ = self._rapidocr(img)
                     if result:
-                        texts = [str(item[1]).strip() for item in result if len(item) > 1 and str(item[1]).strip()]
+                        texts = [str(item[1]).strip() for item in result
+                                 if len(item) > 1 and str(item[1]).strip()]
                         if texts:
                             text = " ".join(texts)
                             Logger.info(f"OCR (RapidOCR): '{text[:60]}'")
@@ -162,6 +163,7 @@ class OcrService:
                 except Exception as e:
                     Logger.warning(f"OCR: RapidOCR failed, falling back to Tesseract ({e})")
 
+            processed = None
             if self._tessdata_dir:
                 try:
                     processed = self._preprocess(image)
@@ -200,7 +202,8 @@ class OcrService:
                         fallback = (not words and confidences
                                     and max(confidences) >= 0)
                         if fallback:
-                            words = [t.strip() for lvl, t in zip(data["level"], data["text"]) if lvl == 5 and t.strip()]
+                            words = [t.strip() for lvl, t in zip(data["level"], data["text"])
+                                     if lvl == 5 and t.strip()]
                         candidate = " ".join(words)
                         # Score: prefer more text with reasonable confidence.
                         valid_confs = [c for c in confidences if c >= 0]
@@ -223,7 +226,8 @@ class OcrService:
                     Logger.error(f"OCR failed with langs '{self.lang}': {e}")
 
             try:
-                processed = self._preprocess(image)
+                if processed is None:
+                    processed = self._preprocess(image)
                 tess_config = base_config or "--oem 1 --psm 7"
                 return pytesseract.image_to_string(processed, config=tess_config).strip()
             except Exception as e:

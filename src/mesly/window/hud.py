@@ -2,6 +2,8 @@
 
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 import threading
 import time
@@ -495,6 +497,7 @@ class HUDWindow(QWidget):
         self.watch_region = None
         self._rubber_band = QRubberBand(QRubberBand.Rectangle, self)
         self._rubber_origin = None
+        self._bg_press_pos = None
         self._region_ocr_worker = None
         self._last_watch_region = None
         self._last_watch_ok = False
@@ -821,10 +824,11 @@ class HUDWindow(QWidget):
             self.status_label.setText("Retrofixed (audio)")
             return
 
-        if (self.watch_stream_rect is not None
-                and self.current_watch_hanzi
-                and self.current_watch_hanzi == self.last_hanzi):
-            self.status_label.setText("Heard (audio)")
+        if self.watch_stream_rect is not None:
+            if self.current_watch_hanzi and self.current_watch_hanzi == self.last_hanzi:
+                self.status_label.setText("Heard (audio)")
+            else:
+                self.status_label.setText("Heard (no subtitle)")
             return
 
         self.last_hanzi = hanzi
@@ -866,6 +870,24 @@ class HUDWindow(QWidget):
     def _on_audio_error(self, error):
         Logger.error(f"Audio playback error: {error}")
         self.status_label.setText("Audio error")
+
+    def _toggle_media_playback(self):
+        """Toggle play/pause for the active MPRIS media player (e.g. browser)."""
+        if shutil.which("playerctl") is None:
+            self.status_label.setText("playerctl not found")
+            return
+        try:
+            result = subprocess.run(
+                ["playerctl", "play-pause"],
+                capture_output=True, text=True, timeout=2)
+            if result.returncode == 0:
+                self.status_label.setText("Media toggled")
+            else:
+                err = (result.stderr or result.stdout or "").strip()
+                self.status_label.setText(err or "Media toggle failed")
+        except Exception as e:
+            Logger.error(f"playerctl failed: {e}")
+            self.status_label.setText("Media toggle failed")
 
     # ------------------------------------------------------------------
     # Window chrome: drag, maximize, restore
@@ -912,13 +934,12 @@ class HUDWindow(QWidget):
     # ------------------------------------------------------------------
 
     def mousePressEvent(self, event):
-        # Left drag draws the watch region right over the live video,
-        # but only when watch mode is enabled.
-        if (self.watch_enabled and event.button() == Qt.LeftButton
-                and self._rubber_origin is None):
-            self._rubber_origin = event.pos()
-            self._rubber_band.setGeometry(QRect(self._rubber_origin, QSize()))
-            self._rubber_band.show()
+        if event.button() == Qt.LeftButton:
+            self._bg_press_pos = event.pos()
+            if self.watch_enabled and self._rubber_origin is None:
+                self._rubber_origin = event.pos()
+                self._rubber_band.setGeometry(QRect(self._rubber_origin, QSize()))
+                self._rubber_band.show()
             event.accept()
 
     def mouseMoveEvent(self, event):
@@ -928,15 +949,27 @@ class HUDWindow(QWidget):
             event.accept()
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and self._rubber_origin is not None:
-            rect = QRect(self._rubber_origin, event.pos()).normalized()
-            self._rubber_origin = None
-            self._rubber_band.hide()
-            if rect.width() >= MIN_REGION_SIZE and rect.height() >= MIN_REGION_SIZE:
-                self._set_watch_region(rect)
-            event.accept()
+        if event.button() == Qt.LeftButton:
+            pos = event.pos()
+            press_pos = self._bg_press_pos
+            self._bg_press_pos = None
+            if self._rubber_origin is not None:
+                rect = QRect(self._rubber_origin, pos).normalized()
+                moved = (pos - self._rubber_origin).manhattanLength()
+                self._rubber_origin = None
+                self._rubber_band.hide()
+                if moved >= 8 and rect.width() >= MIN_REGION_SIZE and rect.height() >= MIN_REGION_SIZE:
+                    self._set_watch_region(rect)
+                elif press_pos is not None:
+                    self._toggle_media_playback()
+                event.accept()
+                return
+            if press_pos is not None:
+                self._toggle_media_playback()
+                event.accept()
 
     def mouseDoubleClickEvent(self, event):
+        self._bg_press_pos = None
         self._toggle_maximize()
         event.accept()
 
@@ -1055,15 +1088,17 @@ class HUDWindow(QWidget):
             return
 
         rect = self.watch_stream_rect
-        gray = np.asarray(self.last_frame.convert("L"))
+        frame = self.last_frame
+        fw, fh = frame.size
         # Padding absorbs small mapping drift so glyph strokes at the box
         # edge are not cut (cut strokes read as confidence-0 garbage)
         PAD = 8
-        x0 = max(0, min(rect.x() - PAD, gray.shape[1] - 1))
-        y0 = max(0, min(rect.y() - PAD, gray.shape[0] - 1))
-        x1 = max(x0 + 1, min(rect.x() + rect.width() + PAD, gray.shape[1]))
-        y1 = max(y0 + 1, min(rect.y() + rect.height() + PAD, gray.shape[0]))
-        region = gray[y0:y1, x0:x1]
+        x0 = max(0, min(rect.x() - PAD, fw - 1))
+        y0 = max(0, min(rect.y() - PAD, fh - 1))
+        x1 = max(x0 + 1, min(rect.x() + rect.width() + PAD, fw))
+        y1 = max(y0 + 1, min(rect.y() + rect.height() + PAD, fh))
+        crop = frame.crop((x0, y0, x1, y1)).convert("L")
+        region = np.asarray(crop)
 
         # Subtitles are static between cuts: skip the whole OCR pass when
         # the region pixels did not change since the last SUCCESSFUL read.
@@ -1074,7 +1109,6 @@ class HUDWindow(QWidget):
             return
         self._last_watch_region = region
         self._last_watch_ok = False
-        crop = Image.fromarray(np.ascontiguousarray(region))
         # Small text needs bigger strokes for chi_sim: scale the crop so
         # its height reaches ~100px, capped at 4x
         factor = max(1, min(4, -(-96 // crop.height)))
@@ -1097,6 +1131,16 @@ class HUDWindow(QWidget):
         self._last_watch_ok = bool(hanzi)
         if not hanzi:
             if self.watch_stream_rect is not None:
+                if self.current_watch_hanzi and self.last_hanzi == self.current_watch_hanzi:
+                    self.hanzi_label.setText("")
+                    self.pinyin_label.setText("")
+                    self.translation_label.setText("")
+                    self.dict_label.setText("")
+                    self.last_hanzi = ""
+                    self.last_translation = ""
+                    self._sync_card()
+                self.current_watch_hanzi = ""
+                self.current_watch_time = 0.0
                 self.status_label.setText("No Chinese in region")
             else:
                 self.hanzi_label.setText("")
